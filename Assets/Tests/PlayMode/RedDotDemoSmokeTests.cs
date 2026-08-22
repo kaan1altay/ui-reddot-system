@@ -89,6 +89,13 @@ namespace RedDot.Tests
 
             var open = demo.Bridge.Counts();
             TestContext.WriteLine("mail rows: " + demo.MailRows.Count + ", keyed dots: " + open.Keyed);
+
+            var list = demo.GetScreen("MailScreen").GetChild("listMail") as GList;
+            if (list != null)
+            {
+                Assert.That(list.numChildren, Is.EqualTo(demo.MailRows.Count),
+                    "every row in the list is a real mail -- the design-time placeholder is gone");
+            }
             Assert.That(open.Keyed, Is.GreaterThan(before.Keyed),
                 "the screen created keyed dots when its rows bound");
 

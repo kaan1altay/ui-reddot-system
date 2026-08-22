@@ -675,8 +675,28 @@ namespace RedDot.Demo
                 _binder.UnbindAll(MailListOwner);
             }
 
+            // Empty the list itself rather than only the rows this class put in it. A list
+            // authored in the FairyGUI Editor carries a design-time placeholder item, and
+            // that placeholder is a child like any other: left alone it sits at the top of
+            // the mailbox for the whole session, showing mock-up text and a badge nothing
+            // is bound to. The debug log panel clears its own list the same way, on boot.
+            if (_mailList != null)
+            {
+                while (_mailList.numChildren > 0)
+                {
+                    _mailList.RemoveChildAt(0, true);
+                }
+            }
+
+            // Rows are children of the list, so the loop above has already disposed them;
+            // this is the fallback for a list that could not be found at all.
             foreach (var row in _mailRows)
             {
+                if (row.isDisposed)
+                {
+                    continue;
+                }
+
                 row.RemoveFromParent();
                 row.Dispose();
             }
