@@ -122,6 +122,7 @@ namespace RedDot
         private readonly LuaFunction _fnGetValueByKey;
         private readonly LuaFunction _fnBuildKey;
         private readonly LuaFunction _fnCounts;
+        private readonly LuaFunction _fnSeenTrackingTypes;
         private readonly LuaFunction _fnSubscriberCount;
         private readonly LuaFunction _fnDumpState;
         private readonly LuaFunction _fnDumpValues;
@@ -188,6 +189,7 @@ namespace RedDot
             _fnGetValueByKey = Resolve("RedDot.getValueByKey");
             _fnBuildKey = Resolve("RedDot.buildKey");
             _fnCounts = Resolve("RedDot.counts");
+            _fnSeenTrackingTypes = Resolve("RedDot.seenTrackingTypes");
             _fnSubscriberCount = Resolve("RedDot.subscriberCount");
             _fnDumpState = Resolve("RedDot.dumpState");
             _fnDumpValues = Resolve("RedDot.dumpValues");
@@ -382,6 +384,22 @@ namespace RedDot
         }
 
         public int GetRedDotCount() => Counts().Total;
+
+        /// <summary>
+        /// The types whose rules track seen state, sorted.
+        /// </summary>
+        /// <remarks>
+        /// A badge of one of these goes off only when somebody marks it seen, so a host
+        /// that forgets to wire one has built a dot that can never be cleared. Asking the
+        /// engine for the list means the check is against the rules as they actually are,
+        /// including any a hot patch introduced.
+        /// </remarks>
+        public IReadOnlyList<string> SeenTrackingTypes()
+        {
+            ThrowIfDisposed();
+            var joined = AsString(_fnSeenTrackingTypes.Call());
+            return string.IsNullOrEmpty(joined) ? Array.Empty<string>() : joined.Split(';');
+        }
 
         /// <summary>
         /// Turns on a once-a-second sweep that recomputes every live dot and logs the
@@ -720,6 +738,10 @@ function RedDot.getValueByKey(key)         return RedDot.manager:GetValueByKey(k
 
 function RedDot.buildKey(t, ...)
     return manager_mod.BuildKey(t, { ... }, select('#', ...))
+end
+
+function RedDot.seenTrackingTypes()
+    return table.concat(RedDot.manager:SeenTrackingTypes(), ';')
 end
 
 function RedDot.counts()

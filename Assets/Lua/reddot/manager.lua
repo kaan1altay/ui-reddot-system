@@ -900,6 +900,20 @@ function Manager:HasDot(registryKey)
     return self.dots[registryKey] ~= nil
 end
 
+--- The types whose rules track seen state. A badge of one of these can only be
+--- cleared by somebody marking it seen, so a host can check at boot that every one
+--- of them actually has a screen that does.
+function Manager:SeenTrackingTypes()
+    local types = {}
+    for typeName, rule in pairs(self.rules) do
+        if type(rule) == "table" and rule.tracksSeen then
+            types[#types + 1] = typeName
+        end
+    end
+    table.sort(types)
+    return types
+end
+
 function Manager:GetRedDotCount()
     return self.count
 end

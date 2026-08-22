@@ -182,6 +182,71 @@ namespace RedDot.Tests
             Assert.That(shopView, Is.Not.Null);
         }
 
+        /// <summary>Play-test repro: the achievement dot that never cleared.</summary>
+        [UnityTest]
+        public IEnumerator UnlockingAnAchievementOnTheQuestsScreenCanBeClearedAgain()
+        {
+            yield return LoadDemo();
+
+            var demo = Demo;
+            var quests = demo.GetScreen("QuestsScreen");
+            (demo.GetScreen("Main").GetChild("btnQuests") as GComponent)?.onClick.Call();
+            yield return null;
+
+            var achievements = quests.GetChild("btnAchievements") as GComponent;
+            var view = demo.Binder.ViewOf(achievements);
+            Assert.That(view, Is.Not.Null);
+            Assert.That(view.Visible, Is.False, "nothing is claimable yet");
+
+            (quests.GetChild("btnUnlockAchievement") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(view.Visible, Is.True, "an unlocked achievement is waiting to be claimed");
+
+            // Tapping it claims it, which is the only thing that can turn this dot off:
+            // its rule asks about real game state, not about having been looked at.
+            achievements.onClick.Call();
+            yield return null;
+
+            Assert.That(demo.Quests.IsClaimable(2, 7), Is.False, "the tap claimed it");
+            Assert.That(view.Visible, Is.False, "and the dot cleared, on the screen, with no navigation");
+            Assert.That(demo.Bridge.GetValue("Quests"), Is.False,
+                "so did the Quests button, which was lit for the same reason");
+            Assert.That(demo.Bridge.Reconcile(), Is.Zero);
+        }
+
+        /// <summary>The other half: unlock somewhere else, then come to the screen.</summary>
+        [UnityTest]
+        public IEnumerator AnAchievementUnlockedElsewhereIsWaitingWhenTheScreenOpens()
+        {
+            yield return LoadDemo();
+
+            var demo = Demo;
+            Assert.That(demo.CurrentScreen, Is.EqualTo("Main"));
+
+            demo.Quests.Complete(2, 7);
+            yield return null;
+
+            var questsButton = demo.GetScreen("Main").GetChild("btnQuests") as GComponent;
+            Assert.That(demo.Binder.ViewOf(questsButton).Visible, Is.True,
+                "the lobby button lit without the quests screen having been opened");
+
+            questsButton.onClick.Call();
+            yield return null;
+
+            var quests = demo.GetScreen("QuestsScreen");
+            var achievements = quests.GetChild("btnAchievements") as GComponent;
+            Assert.That(demo.Binder.ViewOf(achievements).Visible, Is.True,
+                "and the row is correct on the frame the screen opened");
+            Assert.That(demo.Bridge.GetValue("Quests"), Is.True,
+                "opening the screen marks it seen, but something is still claimable");
+
+            achievements.onClick.Call();
+            yield return null;
+
+            Assert.That(demo.Binder.ViewOf(achievements).Visible, Is.False);
+            Assert.That(demo.Bridge.GetValue("Quests"), Is.False, "now there is nothing left to claim");
+        }
+
         [UnityTest]
         public IEnumerator AdvancingADayFiresTheScheduledResetWithNoEventAtAll()
         {

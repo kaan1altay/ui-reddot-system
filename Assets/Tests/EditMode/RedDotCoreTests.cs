@@ -909,6 +909,68 @@ return rules
 
         #endregion
 
+        #region Seen coverage
+
+        /// <summary>
+        /// The audit the never-clearing-badge bug prompted: a type that tracks seen state
+        /// and that no screen marks can only ever light up once.
+        /// </summary>
+        [Test]
+        public void EverySeenTrackingTypeIsMarkedBySomeScreen()
+        {
+            var tracked = _bridge.SeenTrackingTypes();
+            Assert.That(tracked, Is.EqualTo(new[] { Mail, Quests, Shop }),
+                "the shipped rules that track seen state");
+
+            Assert.That(DemoMain.FindUnmarkedSeenTypes(tracked), Is.Empty,
+                "a tracksSeen type no screen marks would light once and never clear");
+        }
+
+        [Test]
+        public void ThePatchedRulesAreStillFullyCovered()
+        {
+            _bridge.ReloadRules(PatchSource());
+
+            var tracked = _bridge.SeenTrackingTypes();
+            Assert.That(tracked, Contains.Item(LimitedOffer), "the patch introduced another one");
+            Assert.That(DemoMain.FindUnmarkedSeenTypes(tracked), Is.Empty,
+                "and the shop screen marks it, so it can be cleared");
+        }
+
+        [Test]
+        public void TheAuditNamesATypeNoScreenMarks()
+        {
+            var unmarked = DemoMain.FindUnmarkedSeenTypes(new[] { Mail, "GuildRequests" });
+
+            Assert.That(unmarked, Is.EqualTo(new[] { "GuildRequests" }));
+        }
+
+        /// <summary>
+        /// Why the achievements bug was not a seen-mapping problem: QuestItem answers a
+        /// question about real game state, so marking it seen does nothing and only
+        /// claiming the quest can turn it off.
+        /// </summary>
+        [Test]
+        public void AQuestDotGoesOffWhenTheQuestIsClaimedAndNotBefore()
+        {
+            _bridge.Subscribe(new Recorder(), QuestItem, 2, 7);
+
+            _quests.Complete(2, 7);
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(QuestItem, 2, 7), Is.True);
+
+            Assert.That(_bridge.MarkSeen(QuestItem, 2, 7), Is.False, "there is no seen state to set");
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(QuestItem, 2, 7), Is.True,
+                "looking at a claimable quest does not claim it");
+
+            _quests.Claim(2, 7);
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(QuestItem, 2, 7), Is.False);
+        }
+
+        #endregion
+
         #region Diagnostics
 
         [Test]

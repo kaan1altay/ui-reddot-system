@@ -198,6 +198,13 @@ of the screen: the live dot count goes up by one per row and comes back down aga
 These two are the **two-key** case: a `QuestItem` is identified by a chapter and a quest,
 in that order, and the registry key is `QuestItem|2|7`.
 
+Both tabs are **tappable, and tapping one claims that quest** -- the same interaction as
+tapping a mail row to read it. A `QuestItem` rule asks whether the quest is claimable, so
+claiming is the only thing that can turn its dot off; marking it seen does nothing,
+because it reports real game state rather than whether the player has looked. Every quest
+you can put on screen needs an action that claims it, or its badge lights once and stays
+lit.
+
 ### `ShopScreen`
 
 | Child name | Component | Title | Watches |

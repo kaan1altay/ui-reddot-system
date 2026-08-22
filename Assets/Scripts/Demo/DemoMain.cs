@@ -241,6 +241,8 @@ namespace RedDot.Demo
             BuildScreens();
             Show(MainScreen);
 
+            AuditSeenCoverage();
+
             Log(UsingFallbackUI ? "fallback UI (see docs/PACKAGE_SPEC.md)" : "UI package loaded");
             Log(_bridge.Counts().Total + " dots live at boot");
         }
@@ -458,7 +460,24 @@ namespace RedDot.Demo
                 Log("achievement is claimable");
             });
 
+            // Tapping a quest claims it, the way tapping a mail row reads it. A dot whose
+            // condition is "this is claimable" can only go off when something claims it,
+            // so every quest on screen needs an action that does.
+            OnAction(screen, "btnDaily", () => ClaimQuest(DailyQuest, "daily quest"));
+            OnAction(screen, "btnAchievements", () => ClaimQuest(AchievementQuest, "achievement"));
+
             Register(QuestsScreen, screen);
+        }
+
+        private void ClaimQuest((int Chapter, int Quest) quest, string label)
+        {
+            if (!_quests.IsClaimable(quest.Chapter, quest.Quest))
+            {
+                return;
+            }
+
+            _quests.Claim(quest.Chapter, quest.Quest);
+            Log(label + " claimed");
         }
 
         private void BuildShop()
@@ -720,6 +739,11 @@ namespace RedDot.Demo
             try
             {
                 var changed = _bridge.ReloadRules(File.ReadAllText(path));
+
+                // A patch can introduce a type that tracks seen state; if no screen marks
+                // it, that is a permanently lit badge.
+                AuditSeenCoverage();
+
                 Log("patch applied, " + changed + " dot(s) changed, " + _bridge.Counts().Total + " live");
                 Debug.Log("[RedDotDemo] after patch:\n" + _bridge.DumpState());
             }
@@ -787,6 +811,48 @@ namespace RedDot.Demo
                 handler();
                 MarkCurrentScreenSeen();
             });
+        }
+
+        /// <summary>
+        /// Types that track seen state but that no screen ever marks.
+        /// </summary>
+        /// <remarks>
+        /// A badge of such a type goes off only when somebody marks it seen, so if no
+        /// screen does, it lights once and stays lit for the rest of the session with no
+        /// way for the player to clear it. That is invisible in code review and obvious
+        /// in a play-test, which is the wrong way round -- hence the boot check.
+        /// </remarks>
+        public static IReadOnlyList<string> FindUnmarkedSeenTypes(IEnumerable<string> seenTrackingTypes)
+        {
+            var marked = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var types in SeenTypesByScreen.Values)
+            {
+                foreach (var type in types)
+                {
+                    marked.Add(type);
+                }
+            }
+
+            var unmarked = new List<string>();
+            foreach (var type in seenTrackingTypes ?? Array.Empty<string>())
+            {
+                if (!string.IsNullOrEmpty(type) && !marked.Contains(type))
+                {
+                    unmarked.Add(type);
+                }
+            }
+
+            return unmarked;
+        }
+
+        private void AuditSeenCoverage()
+        {
+            foreach (var type in FindUnmarkedSeenTypes(_bridge.SeenTrackingTypes()))
+            {
+                Debug.LogWarning(
+                    "[RedDotDemo] type '" + type + "' tracks seen state but no screen marks it seen; " +
+                    "its badge would light once and never clear. Add it to SeenTypesByScreen.");
+            }
         }
 
         /// <summary>Re-marks whatever the open screen displays. Types that track real
