@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component size="46,46">
+  <controller name="state" exported="true" pages="0,hidden,1,dot,2,count" selected="2"/>
+  <displayList>
+    <graph id="n0_rms6" name="dot" xy="23,23" pivot="0.5,0.5" anchor="true" size="46,46" type="eclipse" lineSize="0" fillColor="#ffff3333">
+      <gearDisplay controller="state" pages="1,2"/>
+      <relation target="" sidePair="width-width,height-height"/>
+    </graph>
+    <richtext id="n1_rms6" name="count" xy="23,23" pivot="0.5,0.5" anchor="true" size="46,46" touchable="false" font="Agency FB" fontSize="22" color="#000033" align="center" vAlign="middle" ubb="true" autoSize="none" bold="true" strokeColor="#999999" singleLine="true" text="99+">
+      <gearDisplay controller="state" pages="2"/>
+      <relation target="" sidePair="width-width,height-height"/>
+    </richtext>
+  </displayList>
+</component>

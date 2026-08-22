@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component size="750,1334">
+  <displayList>
+    <component id="n0_rms6" name="btnDaily" src="rms61" fileName="TabButton.xml" xy="514,197">
+      <relation target="" sidePair="right-right,top-top"/>
+      <property target="title" propertyId="0" value="Daily"/>
+    </component>
+    <component id="n1_rms6" name="btnAchievements" src="rms61" fileName="TabButton.xml" xy="514,363">
+      <relation target="" sidePair="right-right,top-top"/>
+      <property target="title" propertyId="0" value="Achievements"/>
+    </component>
+    <component id="n10_rms6" name="btnCompleteQuest" src="rms62" fileName="ActionButton.xml" xy="37,958">
+      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
+      <Button title="Complete a quest"/>
+    </component>
+    <component id="n5_rms6" name="btnClaimQuest" src="rms62" fileName="ActionButton.xml" xy="29,1051">
+      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
+      <Button title="Claim a quest"/>
+    </component>
+    <component id="n6_rms6" name="btnUnlockAchievement" src="rms62" fileName="ActionButton.xml" xy="29,1144" size="690,78">
+      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
+      <Button title="Unlock an achievement"/>
+    </component>
+    <component id="n7_rms6" name="btnBack" src="rms62" fileName="ActionButton.xml" xy="33,1237" size="690,78">
+      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
+      <Button title="Back"/>
+    </component>
+  </displayList>
+</component>

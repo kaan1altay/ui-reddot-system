@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component size="500,258" extention="Label">
+  <displayList>
+    <text id="n0_rms6" name="title" xy="0,0" size="500,258" fontSize="24" color="#ff0000" ubb="true" vars="true" autoSize="height" text="Debug: &#xA;debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug debug "/>
+  </displayList>
+  <relation target="n0_rms6" sidePair="width-width,height-height"/>
+</component>

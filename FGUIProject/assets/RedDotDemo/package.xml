@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<packageDescription id="vzwhkot3">
+  <resources>
+    <component id="efdb0" name="RedDotBadge.xml" path="/" exported="true"/>
+    <component id="rms61" name="TabButton.xml" path="/"/>
+    <component id="rms62" name="ActionButton.xml" path="/"/>
+    <component id="rms63" name="Main.xml" path="/" exported="true"/>
+    <component id="rms64" name="DebugTextListItem.xml" path="/" exported="true"/>
+    <component id="rms65" name="MailScreen.xml" path="/" exported="true"/>
+    <component id="rms66" name="QuestsScreen.xml" path="/" exported="true"/>
+    <component id="rms67" name="ShopScreen.xml" path="/" exported="true"/>
+  </resources>
+  <publish name=""/>
+</packageDescription>

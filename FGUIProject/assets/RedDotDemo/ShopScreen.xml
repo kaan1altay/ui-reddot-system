@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component size="750,1334">
+  <displayList>
+    <component id="n0_rms6" name="btnDailyDeals" src="rms61" fileName="TabButton.xml" xy="514,197">
+      <relation target="" sidePair="right-right,top-top"/>
+      <property target="title" propertyId="0" value="Daily deals"/>
+    </component>
+    <component id="n1_rms6" name="btnLimitedOffer" src="rms61" fileName="TabButton.xml" xy="514,365">
+      <relation target="" sidePair="right-right,top-top"/>
+      <property target="title" propertyId="0" value="Limited offer"/>
+    </component>
+    <component id="n6_rms6" name="btnNewDeal" src="rms62" fileName="ActionButton.xml" xy="29,1144" size="690,78">
+      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
+      <Button title="New deal arrives"/>
+    </component>
+    <component id="n7_rms6" name="btnBack" src="rms62" fileName="ActionButton.xml" xy="33,1237" size="690,78">
+      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
+      <Button title="Back"/>
+    </component>
+  </displayList>
+</component>

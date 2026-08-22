@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component size="690,78" extention="Button">
+  <displayList>
+    <text id="n3_rms6" name="title" xy="0,0" size="690,78" font="Agency FB" fontSize="36" align="center" vAlign="middle" ubb="true" autoSize="none" bold="true" singleLine="true" text="ButtonButtonButtonButtonButton">
+      <relation target="" sidePair="width-width,height-height"/>
+    </text>
+  </displayList>
+  <Button/>
+</component>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component size="220,150">
+  <displayList>
+    <graph id="n5_rms6" name="graphButtonBG" xy="0,0" size="220,150" type="rect" lineSize="15" lineColor="#ff666666" fillColor="#ff999999">
+      <relation target="" sidePair="width-width,height-height"/>
+    </graph>
+    <text id="n3_rms6" name="title" xy="110,75" pivot="0.5,0.5" anchor="true" size="190,120" font="Agency FB" fontSize="24" align="center" vAlign="middle" ubb="true" autoSize="none" bold="true" singleLine="true" text="ButtonButtonButton">
+      <relation target="" sidePair="width-width,height-height"/>
+    </text>
+    <component id="n4_rms6" name="redDot" src="efdb0" fileName="RedDotBadge.xml" xy="189,-11" pivot="0.5,0.5">
+      <relation target="" sidePair="right-right,top-top"/>
+    </component>
+  </displayList>
+  <customProperty target="title" propertyId="0"/>
+</component>

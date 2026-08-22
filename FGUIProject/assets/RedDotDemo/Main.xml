@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component size="750,1334">
+  <displayList>
+    <component id="n0_rms6" name="btnMail" src="rms61" fileName="TabButton.xml" xy="514,197">
+      <relation target="" sidePair="right-right,top-top"/>
+      <property target="title" propertyId="0" value="Mail"/>
+    </component>
+    <component id="n1_rms6" name="btnQuests" src="rms61" fileName="TabButton.xml" xy="514,363">
+      <relation target="" sidePair="right-right,top-top"/>
+      <property target="title" propertyId="0" value="Quests"/>
+    </component>
+    <component id="n2_rms6" name="btnShop" src="rms61" fileName="TabButton.xml" xy="514,529">
+      <relation target="" sidePair="right-right,top-top"/>
+      <property target="title" propertyId="0" value="Shop"/>
+    </component>
+    <component id="n5_rms6" name="btnApplyPatch" src="rms62" fileName="ActionButton.xml" xy="35,1055">
+      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
+      <Button title="Apply Lua patch"/>
+    </component>
+    <component id="n6_rms6" name="btnStartOffer" src="rms62" fileName="ActionButton.xml" xy="35,1148" size="690,78">
+      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
+      <Button title="Start limited offer"/>
+    </component>
+    <component id="n7_rms6" name="btnDumpTree" src="rms62" fileName="ActionButton.xml" xy="35,1241" size="690,78">
+      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
+      <Button title="Dump tree"/>
+    </component>
+    <list id="n9_rms6" name="listDebugText" xy="0,0" size="494,882" overflow="scroll" defaultItem="ui://vzwhkot3rms64" align="center">
+      <relation target="" sidePair="width-width,height-height,left-left,top-top"/>
+      <item/>
+    </list>
+  </displayList>
+</component>
