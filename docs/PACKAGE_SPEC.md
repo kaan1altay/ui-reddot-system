@@ -102,10 +102,37 @@ here so the demo reads sensibly.
 | `btnApplyPatch` | ActionButton | "Apply Lua patch" | — |
 | `btnStartOffer` | ActionButton | "Start limited offer" | — |
 | `btnDumpTree` | ActionButton | "Dump tree" | — |
+| `listDebugText` | list (optional) | — | — |
 | `txtDebug` | text (optional) | — | — |
 
-`txtDebug` is the demo's log panel: multi-line, left-aligned, roughly 690 × 560, not
-touchable. Leave it out and the demo simply logs to the console instead.
+The demo writes its running commentary to the first of these it finds, and to the Unity
+console if it finds neither.
+
+`listDebugText` is the good one: a **non-virtual** `GList` with `overflow: scroll`, whose
+default item is `DebugTextListItem`. The demo appends one item per line, caps the list at
+100 by dropping the oldest, and scrolls to the newest. Placeholder items left inside it in
+the editor are cleared on boot, so the mock-up text never shows at runtime. A *virtual*
+list is ignored with a warning — those are driven by `numItems` and an item renderer
+rather than by appending children.
+
+`txtDebug` is the simpler alternative: one multi-line text field, roughly 690 × 560, not
+touchable, showing the last twelve lines. It is what the code-built fallback UI uses.
+
+### `DebugTextListItem` — one log line
+
+**Must be exported.** Extension **Label**, holding a text field named `title` with
+`autoSize: height`, and a relation from the component to that text
+(`width-width, height-height`) so the item grows to fit a long line. The demo writes
+through the label's title.
+
+If the list names no default item, the demo falls back to whatever item is already inside
+it, and then to a component named `DebugTextListItem` looked up in the package. If none of
+those resolve it says so in the console and drops to `txtDebug`.
+
+> Note: the item's text field has UBB and variable parsing available in the editor. The
+> demo's own lines contain no markup, but `debugDump()` output does contain square
+> brackets — if you ever route that into the list rather than the console, turn UBB off on
+> the item or the brackets will be eaten as markup.
 
 ### `MailScreen`
 

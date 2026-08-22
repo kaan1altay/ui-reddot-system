@@ -4,10 +4,9 @@ A data-driven, hot-updatable **red dot (badge) notification system** for live-se
 mobile UIs — the rules and the tree live in **Lua (xLua)**, the views are **FairyGUI**,
 and the C# in between knows nothing about any particular badge.
 
-> **Status: Slice 2 complete.** The engine, the FairyGUI view layer and a playable demo
-> scene are in, with 54 EditMode and 2 PlayMode tests green. The demo currently runs on a
-> code-built placeholder UI; the authored package is next. See
-> [docs/STATUS.md](docs/STATUS.md).
+> **Status: Slice 2 complete.** The engine, the FairyGUI view layer, the authored UI
+> package and a playable demo scene are in, with 66 EditMode and 2 PlayMode tests green.
+> See [docs/STATUS.md](docs/STATUS.md).
 
 ## The idea
 
@@ -69,8 +68,8 @@ Open `Assets/Scenes/RedDotDemo.unity` and press Play. Tabs open sections, button
 the fake mail / quest / shop services, and the debug panel applies the example Lua patch
 live.
 
-The authored UI package is not in the repository yet, so the demo builds the same screens
-in code and says so in the console. Everything is playable either way.
+If the authored UI package is ever missing, the demo builds the same screens in code and
+says so in the console. Everything is playable either way.
 
 ## Running the tests
 
@@ -91,7 +90,7 @@ Swap `EditMode` for `PlayMode` for the scene smoke tests, or use
 | `Assets/Lua/patches/` | the example live-ops patch |
 | `Assets/Scripts/RedDot/` | the bridge, the FairyGUI view and the binding lifetime |
 | `Assets/Scripts/Demo/` | the demo bootstrap, the code-built UI, fake game managers |
-| `Assets/Tests/` | 54 EditMode cases and 2 PlayMode smoke tests |
+| `Assets/Tests/` | 66 EditMode cases and 2 PlayMode smoke tests |
 | `docs/STATUS.md` | versions, design decisions, test results, what comes next |
 | `docs/PACKAGE_SPEC.md` | how to author the FairyGUI package the demo binds to |
 

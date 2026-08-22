@@ -37,6 +37,13 @@ namespace RedDot.Tests
                 ? "running on the code-built fallback UI"
                 : "running on the authored RedDotDemo package");
 
+            // The authored package carries a scrolling list; the code-built fallback only
+            // has a text field. Either way the boot line has to have landed somewhere.
+            Assert.That(demo.LogPanel, Is.Not.Null);
+            Assert.That(demo.LogPanel.Target, Is.EqualTo(
+                demo.UsingFallbackUI ? DemoLogTarget.TextField : DemoLogTarget.List));
+            Assert.That(demo.LogPanel.LineCount, Is.GreaterThan(0));
+
             var main = demo.GetScreen("Main");
             Assert.That(main, Is.Not.Null);
             Assert.That(main.parent, Is.EqualTo(GRoot.inst), "the main screen is on the root");

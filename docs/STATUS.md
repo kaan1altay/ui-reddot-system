@@ -163,8 +163,9 @@ the end of the frame that caused them, instead of flickering through intermediat
 
 ### Graceful missing-package mode
 
-The `.fui` package does not exist yet, so `DemoMain` builds the same screens in code and
-says so:
+The authored `RedDotDemo` package is now in the repository, so this is no longer the
+default path -- but it stays load-bearing. When the package is absent `DemoMain` builds
+the same screens in code and says so:
 
 ```
 [RedDotDemo] UI package 'RedDotDemo' not found -- using fallback UI.
@@ -189,6 +190,7 @@ Assets/Scripts/Demo/
   DemoMain.cs               boot, screen flow, the (screen, child, path) table, debug panel
   DemoUIFactory.cs          the code-built screens: fallback UI and test fixtures
   RedDotDriver.cs           one Flush per frame, in LateUpdate
+  DemoLogPanel.cs           the on-screen log: scrolling list, text field, or console
   FairyGuiEnvironment.cs    default font setup (Unity 6 no longer serves Arial.ttf)
 
 Assets/Editor/
@@ -212,11 +214,12 @@ again.
 
 ## Test results
 
-**54 / 54 EditMode**, 39.0 s, and **2 / 2 PlayMode**, 3.4 s. Both run headless.
+**66 / 66 EditMode**, 39.2 s, and **2 / 2 PlayMode**, 3.5 s. Both run headless, and the
+PlayMode pair now runs against the authored UI package.
 
 ```
 Unity 6000.0.59f2, NUnit 3.5.0
-EditMode  total="54" passed="54" failed="0" inconclusive="0" skipped="0"
+EditMode  total="66" passed="66" failed="0" inconclusive="0" skipped="0"
 PlayMode  total="2"  passed="2"  failed="0" inconclusive="0" skipped="0"
 ```
 
@@ -241,7 +244,7 @@ it asserts that each parent equals the aggregate of its children under its polic
 that the set of notified paths is exactly the set of paths whose state differs: nothing
 silent, nothing spurious, nothing notified twice.
 
-### Slice 2 — the view layer (19 cases)
+### Slice 2 — the view layer and the demo log (31 cases)
 
 | Area | Cases |
 | --- | --- |
@@ -251,6 +254,7 @@ silent, nothing spurious, nothing notified twice.
 | Pooled reuse | **rebinding a recycled component drops the old binding entirely** — the stale view never hears about the old node again — and rebinding to the same path does not stack callbacks |
 | Disposal | a disposed component releases itself on the next update, and can also be swept explicitly |
 | Hot update | a badge bound to a path with no rule lights up when the example patch introduces it |
+| Debug log | the scrolling list wins over the text field which wins over the console, placeholder items are cleared on boot, one item per line, the oldest drop past the cap (custom and the default 100), a list whose item cannot be built degrades to the text field, and the code-built fallback UI still logs |
 
 ### Slice 2 — the demo scene (2 PlayMode cases)
 

@@ -94,8 +94,6 @@ namespace RedDot.Demo
         private const string PatchFile = "Lua/patches/rules_patch_example.lua";
         private const string LimitedOfferEvent = "LimitedOfferStarted";
 
-        private const int LogLines = 12;
-
         #endregion
 
         #region State
@@ -110,10 +108,9 @@ namespace RedDot.Demo
         private RedDotDriver _driver;
 
         private readonly Dictionary<string, GComponent> _screens = new Dictionary<string, GComponent>(StringComparer.Ordinal);
-        private readonly List<string> _log = new List<string>();
 
         private GComponent _current;
-        private GTextField _output;
+        private DemoLogPanel _logPanel;
 
         /// <summary>True when the authored package was not found and code-built screens are in use.</summary>
         public bool UsingFallbackUI { get; private set; }
@@ -127,6 +124,9 @@ namespace RedDot.Demo
         public FakeQuestService Quests => _quests;
 
         public FakeShopService Shop => _shop;
+
+        /// <summary>Where the demo writes its running commentary.</summary>
+        public DemoLogPanel LogPanel => _logPanel;
 
         /// <summary>One of the built screens by component name, or null.</summary>
         public GComponent GetScreen(string name)
@@ -220,7 +220,7 @@ namespace RedDot.Demo
 
             _screens.Clear();
             _current = null;
-            _output = null;
+            _logPanel = null;
 
             _bridge?.Dispose();
             _bridge = null;
@@ -326,7 +326,7 @@ namespace RedDot.Demo
                 column.Add(DemoUIFactory.CreateOutputPanel("txtDebug", DemoUIFactory.ButtonWidth, 560));
             }
 
-            _output = screen.GetChild("txtDebug") as GTextField;
+            _logPanel = new DemoLogPanel(screen, PackageName, message => Debug.Log("[RedDotDemo] " + message));
 
             OnClick(screen, "btnMail", () => Show(MailScreen));
             OnClick(screen, "btnQuests", () => Show(QuestsScreen));
@@ -515,19 +515,13 @@ namespace RedDot.Demo
             child.onClick.Add(() => handler());
         }
 
-        /// <summary>Appends a line to the on-screen debug panel, keeping the last few.</summary>
+        /// <summary>
+        /// Appends a line to whichever debug panel the UI package turned out to have —
+        /// a scrolling list, a plain text field, or the console.
+        /// </summary>
         private void Log(string message)
         {
-            _log.Add(message);
-            if (_log.Count > LogLines)
-            {
-                _log.RemoveRange(0, _log.Count - LogLines);
-            }
-
-            if (_output != null)
-            {
-                _output.text = string.Join("\n", _log);
-            }
+            _logPanel?.Append(message);
         }
 
         #endregion
