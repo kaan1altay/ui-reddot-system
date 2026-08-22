@@ -21,6 +21,7 @@ namespace RedDot.Demo
     public sealed class RedDotDriver : MonoBehaviour
     {
         private RedDotBridge _bridge;
+        private FakeClock _clock;
 
         /// <summary>Nodes changed by the most recent flush. Handy on a debug overlay.</summary>
         public int LastChangeCount { get; private set; }
@@ -28,14 +29,20 @@ namespace RedDot.Demo
         /// <summary>Flushes that actually had work to do since this driver started.</summary>
         public int WorkingFlushes { get; private set; }
 
-        public void Attach(RedDotBridge bridge)
+        /// <param name="clock">
+        /// Advanced by the frame delta before each flush, so the demo's game time runs at
+        /// the usual rate and a scheduled reset fires because the clock passed it.
+        /// </param>
+        public void Attach(RedDotBridge bridge, FakeClock clock = null)
         {
             _bridge = bridge;
+            _clock = clock;
         }
 
         public void Detach()
         {
             _bridge = null;
+            _clock = null;
         }
 
         private void LateUpdate()
@@ -44,6 +51,8 @@ namespace RedDot.Demo
             {
                 return;
             }
+
+            _clock?.Advance(Time.deltaTime);
 
             LastChangeCount = _bridge.Flush();
             if (LastChangeCount > 0)

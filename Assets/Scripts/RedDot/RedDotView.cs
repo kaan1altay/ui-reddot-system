@@ -67,6 +67,13 @@ namespace RedDot
 
             _badge = host.GetChild(BadgeChildName);
 
+            if (_badge != null)
+            {
+                // The badge sits on top of the thing it decorates; it must never eat the
+                // click meant for the button underneath.
+                _badge.touchable = false;
+            }
+
             var badgeComponent = _badge as GComponent;
             if (badgeComponent != null)
             {
@@ -87,8 +94,8 @@ namespace RedDot
         /// <summary>False when the badge has no <c>state</c> controller and falls back to visibility.</summary>
         public bool HasStateController => _state != null;
 
-        /// <summary>The node path last applied, or null before the first update.</summary>
-        public string Path { get; private set; }
+        /// <summary>The registry key last applied, or null before the first update.</summary>
+        public string Key { get; private set; }
 
         public bool Visible { get; private set; }
 
@@ -100,11 +107,18 @@ namespace RedDot
         /// <summary>What the count field reads right now, or null when there is no field.</summary>
         public string CountText => _countText != null ? _countText.text : null;
 
-        /// <summary>Entry point from the engine. Public on purpose: see <see cref="IRedDotHandle"/>.</summary>
-        public void SetRedDot(string path, bool visible, int count)
+        /// <summary>
+        /// Entry point from the engine. Public on purpose: see <see cref="IRedDotHandle"/>.
+        /// </summary>
+        /// <remarks>
+        /// The engine reports a boolean -- a dot is on or it is not -- so nothing here
+        /// ever asks for the `count` page. <see cref="Apply(bool,int)"/> still supports
+        /// it, so a rule that grows a number later needs no change on this side.
+        /// </remarks>
+        public void SetRedDot(string registryKey, bool value)
         {
-            Path = path;
-            Apply(visible, count);
+            Key = registryKey;
+            Apply(value, 0);
         }
 
         /// <summary>

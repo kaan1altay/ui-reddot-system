@@ -5,27 +5,31 @@ using FairyGUI;
 namespace RedDot
 {
     /// <summary>
-    /// Binds FairyGUI components to red dot paths and takes care of the lifetime.
+    /// Binds FairyGUI components to red dots and takes care of the lifetime.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <see cref="RedDotBridge.Bind"/> is the raw seam: it registers a handle and expects
-    /// somebody to unregister it. This class is what makes that safe to use from UI code,
-    /// where components are disposed by screen teardown and recycled by list pools, in an
-    /// order nobody controls.
+    /// <see cref="RedDotBridge.Subscribe"/> is the raw seam: it registers a handle and
+    /// expects somebody to unregister it. This class is what makes that safe to use from
+    /// UI code, where components are disposed by screen teardown and recycled by list
+    /// pools in an order nobody controls.
     /// </para>
     /// <para>
-    /// Two guarantees:
+    /// Three guarantees:
     /// </para>
     /// <list type="number">
     /// <item><b>One binding per component.</b> Binding a component that is already bound
-    /// releases the previous binding first. That is what makes it safe to reuse a pooled
-    /// list item for a different node: the old callback is gone before the new one is
-    /// registered, so a recycled row can never light up for the row it used to be.</item>
+    /// releases the previous binding first. That is what makes a pooled list row safe to
+    /// reuse for a different mail: the old subscription is gone before the new one
+    /// exists, so a recycled row can never light up for the row it used to be — and the
+    /// keyed dot it was holding open is destroyed with it.</item>
     /// <item><b>Disposed components release themselves.</b> A component that leaves the
     /// stage while disposed unbinds immediately, and any update aimed at a disposed
     /// component unbinds it on the spot. The second path is the one that matters, because
-    /// a component disposed before it was ever on the stage never raises the first.</item>
+    /// a component disposed before it ever reached the stage never raises the first.</item>
+    /// <item><b>The active flag is honoured.</b> <see cref="SetRedDotActive"/> is an
+    /// external kill switch, and the badge shows only when the rule says yes
+    /// <em>and</em> the screen says yes.</item>
     /// </list>
     /// </remarks>
     public sealed class RedDotBinder
@@ -43,26 +47,31 @@ namespace RedDot
         public int Count => _bindings.Count;
 
         /// <summary>
-        /// Binds the badge inside <paramref name="component"/> to <paramref name="path"/>.
-        /// The current state is pushed immediately, so the badge is right on the frame it
-        /// appears rather than on the next change.
+        /// Binds the badge inside <paramref name="component"/> to the dot identified by
+        /// <paramref name="type"/> and <paramref name="keys"/>. The current value is
+        /// pushed immediately, so the badge is right on the frame it appears rather than
+        /// on the next event.
         /// </summary>
-        /// <param name="owner">
-        /// Optional grouping key — a screen name, a window, a list — that
-        /// <see cref="UnbindAll"/> can release in one call. Without one, the binding lives
-        /// until the component is unbound explicitly or disposed.
-        /// </param>
-        /// <returns>The view driving the badge, so callers can inspect it in tests.</returns>
-        public RedDotView Bind(GComponent component, string path, string owner = null)
+        /// <returns>The view driving the badge.</returns>
+        public RedDotView Bind(GComponent component, string type, params object[] keys)
+        {
+            return BindOwned(component, null, type, keys);
+        }
+
+        /// <summary>
+        /// As <see cref="Bind"/>, with a grouping key — a screen name, a window, a list —
+        /// that <see cref="UnbindAll"/> can release in one call.
+        /// </summary>
+        public RedDotView BindOwned(GComponent component, string owner, string type, params object[] keys)
         {
             if (component == null)
             {
                 throw new ArgumentNullException(nameof(component));
             }
 
-            if (string.IsNullOrEmpty(path))
+            if (string.IsNullOrEmpty(type))
             {
-                throw new ArgumentException("A red dot binding needs a node path.", nameof(path));
+                throw new ArgumentException("A red dot binding needs a type name.", nameof(type));
             }
 
             if (component.isDisposed)
@@ -71,14 +80,15 @@ namespace RedDot
             }
 
             // The pooled-reuse guarantee: whatever this component was showing before, it
-            // stops showing it now.
+            // stops showing it now — and the keyed dot it was holding open goes with the
+            // subscription.
             Unbind(component);
 
-            var binding = new Binding(this, component, path, owner);
+            var binding = new Binding(this, component, owner);
             _bindings.Add(component, binding);
 
             binding.Attach();
-            _bridge.Bind(path, binding, owner);
+            binding.RegistryKey = _bridge.Subscribe(binding, type, keys);
 
             return binding.View;
         }
@@ -99,20 +109,13 @@ namespace RedDot
             return true;
         }
 
-        /// <summary>
-        /// Releases every binding registered under <paramref name="owner"/>. This is the
-        /// one call a screen makes when it closes.
-        /// </summary>
+        /// <summary>Releases every binding registered under <paramref name="owner"/>.</summary>
         public int UnbindAll(string owner)
         {
             if (string.IsNullOrEmpty(owner))
             {
                 return 0;
             }
-
-            // Lua owns the owner index, so one call there releases the whole group; this
-            // side only has to forget its bookkeeping.
-            var released = _bridge.UnbindAll(owner);
 
             var stale = new List<Binding>();
             foreach (var pair in _bindings)
@@ -125,10 +128,36 @@ namespace RedDot
 
             foreach (var binding in stale)
             {
-                Release(binding, unregisterFromLua: false);
+                Release(binding, unregisterFromLua: true);
             }
 
-            return released;
+            return stale.Count;
+        }
+
+        /// <summary>
+        /// The external kill switch: the badge shows only when the rule value and this
+        /// are both true.
+        /// </summary>
+        /// <remarks>
+        /// For the cases a rule should not have to know about — a tutorial step that
+        /// suppresses every badge but one, a tab locked until a level, a screen fading
+        /// out. Encoding those in the rule would mix presentation into the data model and
+        /// make the rule untestable on its own.
+        /// </remarks>
+        public bool SetRedDotActive(GComponent component, bool active)
+        {
+            if (component == null || !_bindings.TryGetValue(component, out var binding))
+            {
+                return false;
+            }
+
+            binding.SetActive(active);
+            return true;
+        }
+
+        public bool IsRedDotActive(GComponent component)
+        {
+            return component != null && _bindings.TryGetValue(component, out var binding) && binding.Active;
         }
 
         /// <summary>
@@ -160,10 +189,12 @@ namespace RedDot
             return dead.Count;
         }
 
-        /// <summary>The path a component is currently bound to, or null.</summary>
-        public string PathOf(GComponent component)
+        /// <summary>The registry key a component is currently bound to, or null.</summary>
+        public string KeyOf(GComponent component)
         {
-            return component != null && _bindings.TryGetValue(component, out var binding) ? binding.Path : null;
+            return component != null && _bindings.TryGetValue(component, out var binding)
+                ? binding.RegistryKey
+                : null;
         }
 
         /// <summary>The view driving a component's badge, or null when it is not bound.</summary>
@@ -181,40 +212,46 @@ namespace RedDot
 
             binding.Detach();
 
-            if (unregisterFromLua)
+            if (unregisterFromLua && binding.RegistryKey != null)
             {
-                _bridge.Unbind(binding.Path, binding);
+                _bridge.Unsubscribe(binding.RegistryKey, binding);
             }
         }
 
         /// <summary>
-        /// The handle the Lua binder actually holds. It sits in front of the view so that
-        /// an update aimed at a disposed component releases the binding instead of poking
-        /// a dead object.
+        /// The handle the engine actually holds. It sits in front of the view so that an
+        /// update aimed at a disposed component releases the binding instead of poking a
+        /// dead object, and so the active flag can veto a value without the rule knowing.
         /// </summary>
         private sealed class Binding : IRedDotHandle
         {
             private readonly RedDotBinder _binder;
             private readonly EventCallback0 _onRemovedFromStage;
 
-            public Binding(RedDotBinder binder, GComponent component, string path, string owner)
+            public Binding(RedDotBinder binder, GComponent component, string owner)
             {
                 _binder = binder;
                 Component = component;
-                Path = path;
                 Owner = owner;
                 View = new RedDotView(component);
+                Active = true;
 
                 _onRemovedFromStage = OnRemovedFromStage;
             }
 
             public GComponent Component { get; }
 
-            public string Path { get; }
-
             public string Owner { get; }
 
             public RedDotView View { get; }
+
+            /// <summary>Set by Subscribe; null only during the call that creates it.</summary>
+            public string RegistryKey { get; set; }
+
+            public bool Active { get; private set; }
+
+            /// <summary>What the rule last said, before the active flag is applied.</summary>
+            public bool RuleValue { get; private set; }
 
             public void Attach()
             {
@@ -226,7 +263,7 @@ namespace RedDot
                 Component.onRemovedFromStage.Remove(_onRemovedFromStage);
             }
 
-            public void SetRedDot(string path, bool visible, int count)
+            public void SetRedDot(string registryKey, bool value)
             {
                 if (Component.isDisposed)
                 {
@@ -234,7 +271,23 @@ namespace RedDot
                     return;
                 }
 
-                View.SetRedDot(path, visible, count);
+                RegistryKey = registryKey;
+                RuleValue = value;
+                View.SetRedDot(registryKey, value && Active);
+            }
+
+            public void SetActive(bool active)
+            {
+                if (Active == active)
+                {
+                    return;
+                }
+
+                Active = active;
+                if (!Component.isDisposed)
+                {
+                    View.SetRedDot(RegistryKey, RuleValue && Active);
+                }
             }
 
             /// <summary>

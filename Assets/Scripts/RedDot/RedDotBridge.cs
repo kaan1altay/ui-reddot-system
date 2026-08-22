@@ -1,82 +1,64 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using RedDot.Events;
 using UnityEngine;
 using XLua;
 
 namespace RedDot
 {
-    /// <summary>The state of one red dot node: whether it shows, and what number it shows.</summary>
-    public readonly struct RedDotState : IEquatable<RedDotState>
-    {
-        public static readonly RedDotState Hidden = new RedDotState(false, 0);
-
-        public RedDotState(bool visible, int count)
-        {
-            Visible = visible;
-            Count = count;
-        }
-
-        public bool Visible { get; }
-
-        public int Count { get; }
-
-        public bool Equals(RedDotState other) => Visible == other.Visible && Count == other.Count;
-
-        public override bool Equals(object obj) => obj is RedDotState other && Equals(other);
-
-        public override int GetHashCode() => (Visible ? 1 : 0) ^ (Count << 1);
-
-        public override string ToString() => Visible ? (Count > 0 ? "* " + Count : "*") : "-";
-    }
-
     /// <summary>Counters the Lua engine keeps, exposed so tests can assert how much work happened.</summary>
     public readonly struct RedDotStats
     {
-        public RedDotStats(int flushes, int leafEvaluations, int aggregations, int notifications, int dispatches)
+        public RedDotStats(int events, int queued, int computes, int notifications, int drains, int mismatches)
         {
-            Flushes = flushes;
-            LeafEvaluations = leafEvaluations;
-            Aggregations = aggregations;
+            Events = events;
+            Queued = queued;
+            Computes = computes;
             Notifications = notifications;
-            Dispatches = dispatches;
+            Drains = drains;
+            Mismatches = mismatches;
         }
 
-        /// <summary>Flushes that found something to do. An idle flush is not counted.</summary>
-        public int Flushes { get; }
+        /// <summary>Events that reached Lua.</summary>
+        public int Events { get; }
 
-        /// <summary>How often a rule's <c>evaluate</c> ran.</summary>
-        public int LeafEvaluations { get; }
+        /// <summary>Dots put on the pending queue. Re-queuing an already-pending dot is free.</summary>
+        public int Queued { get; }
 
-        /// <summary>How often a parent recomputed its aggregate.</summary>
-        public int Aggregations { get; }
+        /// <summary>How often a rule was actually evaluated.</summary>
+        public int Computes { get; }
 
-        /// <summary>How many change notifications were delivered.</summary>
+        /// <summary>Values pushed to subscribers.</summary>
         public int Notifications { get; }
 
-        /// <summary>How many events reached Lua.</summary>
-        public int Dispatches { get; }
+        /// <summary>Ticks that found something on the queue. An idle tick is not one.</summary>
+        public int Drains { get; }
+
+        /// <summary>Disagreements the reconcile checker has found.</summary>
+        public int Mismatches { get; }
 
         public override string ToString()
         {
-            return $"flushes={Flushes} leafEvaluations={LeafEvaluations} aggregations={Aggregations} " +
-                   $"notifications={Notifications} dispatches={Dispatches}";
+            return $"events={Events} queued={Queued} computes={Computes} " +
+                   $"notifications={Notifications} drains={Drains} mismatches={Mismatches}";
         }
     }
 
     /// <summary>
-    /// A view that wants to be told when a red dot changes. Implemented by the FairyGUI
-    /// adapter, and by test doubles.
+    /// A view that wants to be told when a red dot changes.
     /// </summary>
     /// <remarks>
     /// Implement <see cref="SetRedDot"/> implicitly, as a public method. Lua reaches a
     /// handle by member name through xLua reflection, and an explicit interface
-    /// implementation is a private method under a mangled name -- so it compiles, binds,
+    /// implementation is a private method under a mangled name — so it compiles, binds,
     /// and then silently never fires.
     /// </remarks>
     public interface IRedDotHandle
     {
-        void SetRedDot(string path, bool visible, int count);
+        /// <param name="registryKey">The dot's identity, e.g. <c>"MailItem|42"</c>.</param>
+        /// <param name="value">Whether the dot is on.</param>
+        void SetRedDot(string registryKey, bool value);
     }
 
     /// <summary>Everything <see cref="RedDotBridge"/> needs to boot.</summary>
@@ -103,15 +85,15 @@ namespace RedDot
     /// </summary>
     /// <remarks>
     /// <para>
-    /// C# knows about four things and no more: how to boot Lua, how to raise an event,
-    /// how to flush, and how to hand a view to a path. It knows nothing about mail,
-    /// quests, shops, counts or badge modes — all of that lives in
-    /// <c>Assets/Lua/reddot/rules.lua</c> and can be replaced at runtime.
+    /// C# knows how to boot Lua, how to raise an event, how to tick a frame, and how to
+    /// hand a view a type and some key values. It knows nothing about what any badge
+    /// means — that lives in <c>Assets/Lua/reddot/RedDotRules.lua</c> and can be
+    /// replaced at runtime.
     /// </para>
     /// <para>
-    /// Only strings, booleans and numbers cross the boundary in either direction. No
-    /// Lua table is ever marshalled into C#, and no C# delegate is ever handed to Lua,
-    /// which keeps the bridge free of generated glue code and cheap to reason about.
+    /// Only strings, booleans and numbers cross the boundary in either direction. No Lua
+    /// table is ever marshalled into C# and no C# delegate is ever handed to Lua, which
+    /// keeps the bridge free of generated glue and cheap to reason about.
     /// </para>
     /// </remarks>
     public sealed class RedDotBridge : IDisposable
@@ -129,26 +111,30 @@ namespace RedDot
 
         private readonly List<LuaFunction> _functions = new List<LuaFunction>();
 
-        private readonly LuaFunction _fnDispatch;
-        private readonly LuaFunction _fnFlush;
+        private readonly LuaFunction _fnQueueEvent;
+        private readonly LuaFunction _fnTick;
+        private readonly LuaFunction _fnSubscribe;
+        private readonly LuaFunction _fnUnsubscribe;
+        private readonly LuaFunction _fnClearSubscriptions;
         private readonly LuaFunction _fnMarkSeen;
-        private readonly LuaFunction _fnGetState;
-        private readonly LuaFunction _fnReloadRules;
-        private readonly LuaFunction _fnReloadRulesFromModule;
-        private readonly LuaFunction _fnDumpStates;
-        private readonly LuaFunction _fnDebugDump;
-        private readonly LuaFunction _fnSubscribedEvents;
+        private readonly LuaFunction _fnIsSeen;
+        private readonly LuaFunction _fnGetValue;
+        private readonly LuaFunction _fnGetValueByKey;
+        private readonly LuaFunction _fnBuildKey;
+        private readonly LuaFunction _fnCounts;
+        private readonly LuaFunction _fnSubscriberCount;
+        private readonly LuaFunction _fnDumpState;
+        private readonly LuaFunction _fnDumpValues;
         private readonly LuaFunction _fnStats;
         private readonly LuaFunction _fnResetStats;
-        private readonly LuaFunction _fnBind;
-        private readonly LuaFunction _fnUnbind;
-        private readonly LuaFunction _fnUnbindAll;
-        private readonly LuaFunction _fnBindingCount;
+        private readonly LuaFunction _fnSetReconcileEnabled;
+        private readonly LuaFunction _fnReconcile;
+        private readonly LuaFunction _fnReloadRules;
+        private readonly LuaFunction _fnValidateSource;
+        private readonly LuaFunction _fnCreateGlobalRedDots;
+        private readonly LuaFunction _fnNextDeadline;
 
         private bool _disposed;
-
-        /// <summary>Raised for every node whose state actually changed during a flush.</summary>
-        public event Action<string, RedDotState> Changed;
 
         public EventBus Bus => _bus;
 
@@ -191,28 +177,35 @@ namespace RedDot
 
             _env.DoString(Bootstrap, BootstrapChunkName);
 
-            _fnDispatch = Resolve("RedDot.dispatch");
-            _fnFlush = Resolve("RedDot.flush");
+            _fnQueueEvent = Resolve("RedDot.queueEvent");
+            _fnTick = Resolve("RedDot.tick");
+            _fnSubscribe = Resolve("RedDot.subscribe");
+            _fnUnsubscribe = Resolve("RedDot.unsubscribe");
+            _fnClearSubscriptions = Resolve("RedDot.clearSubscriptions");
             _fnMarkSeen = Resolve("RedDot.markSeen");
-            _fnGetState = Resolve("RedDot.getState");
-            _fnReloadRules = Resolve("RedDot.reloadRules");
-            _fnReloadRulesFromModule = Resolve("RedDot.reloadRulesFromModule");
-            _fnDumpStates = Resolve("RedDot.dumpStates");
-            _fnDebugDump = Resolve("RedDot.debugDump");
-            _fnSubscribedEvents = Resolve("RedDot.subscribedEvents");
+            _fnIsSeen = Resolve("RedDot.isSeen");
+            _fnGetValue = Resolve("RedDot.getValue");
+            _fnGetValueByKey = Resolve("RedDot.getValueByKey");
+            _fnBuildKey = Resolve("RedDot.buildKey");
+            _fnCounts = Resolve("RedDot.counts");
+            _fnSubscriberCount = Resolve("RedDot.subscriberCount");
+            _fnDumpState = Resolve("RedDot.dumpState");
+            _fnDumpValues = Resolve("RedDot.dumpValues");
             _fnStats = Resolve("RedDot.stats");
             _fnResetStats = Resolve("RedDot.resetStats");
-            _fnBind = Resolve("RedDot.bind");
-            _fnUnbind = Resolve("RedDot.unbind");
-            _fnUnbindAll = Resolve("RedDot.unbindAll");
-            _fnBindingCount = Resolve("RedDot.bindingCount");
+            _fnSetReconcileEnabled = Resolve("RedDot.setReconcileEnabled");
+            _fnReconcile = Resolve("RedDot.reconcile");
+            _fnReloadRules = Resolve("RedDot.reloadRules");
+            _fnValidateSource = Resolve("RedDot.validateSource");
+            _fnCreateGlobalRedDots = Resolve("RedDot.createGlobalRedDots");
+            _fnNextDeadline = Resolve("RedDot.nextDeadline");
         }
 
-        #region Public API
+        #region Events and the frame tick
 
         /// <summary>
-        /// Publishes a game event. Events the rules never name as triggers cost a
-        /// dictionary miss and nothing else — they never reach Lua.
+        /// Publishes a game event. Events no rule names as a trigger cost a dictionary
+        /// miss and never reach Lua.
         /// </summary>
         public void RaiseEvent(string name, string payload = null)
         {
@@ -221,51 +214,114 @@ namespace RedDot
         }
 
         /// <summary>
-        /// Evaluates everything the events since the last flush made dirty, exactly once
-        /// per node, and notifies the nodes that changed. Call it once per frame.
+        /// One frame's work: fire anything the clock made due, compute every queued dot
+        /// exactly once, notify the ones that moved, and persist at most one save.
         /// </summary>
-        /// <returns>How many nodes changed. Zero means nothing was dirty.</returns>
+        /// <returns>How many dots changed. Zero means the queue was empty.</returns>
         public int Flush()
         {
             ThrowIfDisposed();
-            return AsInt(_fnFlush.Call());
+            return AsInt(_fnTick.Call());
         }
+
+        #endregion
+
+        #region Subscription
 
         /// <summary>
-        /// Records that the player has looked at <paramref name="path"/>. Passing an
-        /// interior node marks its whole subtree, which is what opening a tab means.
-        /// Persistent badges ignore this.
+        /// Binds a handle to the dot identified by <paramref name="type"/> and
+        /// <paramref name="keys"/>, creating it if this is the first subscriber. The
+        /// current value is pushed before this returns.
         /// </summary>
-        /// <returns>How many nodes flipped to seen. They are dirty until the next flush.</returns>
-        public int MarkSeen(string path)
+        /// <returns>The registry key, which <see cref="Unsubscribe"/> wants back.</returns>
+        public string Subscribe(IRedDotHandle handle, string type, params object[] keys)
         {
             ThrowIfDisposed();
-            return AsInt(_fnMarkSeen.Call(path));
-        }
-
-        public RedDotState GetState(string path)
-        {
-            ThrowIfDisposed();
-            var results = _fnGetState.Call(path);
-            if (results == null || results.Length < 2)
+            if (handle == null)
             {
-                return RedDotState.Hidden;
+                throw new ArgumentNullException(nameof(handle));
             }
 
-            return new RedDotState(Convert.ToBoolean(results[0]), Convert.ToInt32(results[1]));
+            return AsString(_fnSubscribe.Call(Args(handle, type, keys)));
         }
 
-        public bool IsVisible(string path) => GetState(path).Visible;
+        public bool Unsubscribe(string registryKey, IRedDotHandle handle)
+        {
+            ThrowIfDisposed();
+            return AsBool(_fnUnsubscribe.Call(registryKey, handle));
+        }
 
         /// <summary>
-        /// Swaps in a new rule table from Lua source, diffing the event subscriptions and
-        /// re-evaluating the whole tree. Existing bindings survive, because they hold
-        /// paths rather than nodes.
+        /// Drops every subscriber and destroys every keyed dot. What a screen stack calls
+        /// at a state-change boundary, so a screen torn down without unbinding cannot keep
+        /// dots alive for the rest of the session.
+        /// </summary>
+        public int ClearSubscriptions()
+        {
+            ThrowIfDisposed();
+            return AsInt(_fnClearSubscriptions.Call());
+        }
+
+        public int SubscriberCount(string registryKey)
+        {
+            ThrowIfDisposed();
+            return AsInt(_fnSubscriberCount.Call(registryKey));
+        }
+
+        #endregion
+
+        #region Values and seen state
+
+        /// <summary>
+        /// Records that the player has looked, storing the token the rule reports now.
+        /// Types that do not track seen state ignore it.
+        /// </summary>
+        public bool MarkSeen(string type, params object[] keys)
+        {
+            ThrowIfDisposed();
+            return AsBool(_fnMarkSeen.Call(Args(type, keys)));
+        }
+
+        public bool IsSeen(string type, params object[] keys)
+        {
+            ThrowIfDisposed();
+            return AsBool(_fnIsSeen.Call(Args(type, keys)));
+        }
+
+        /// <summary>The cached value, or false when no such dot is live.</summary>
+        public bool GetValue(string type, params object[] keys)
+        {
+            ThrowIfDisposed();
+            return AsBool(_fnGetValue.Call(Args(type, keys)));
+        }
+
+        public bool GetValueByKey(string registryKey)
+        {
+            ThrowIfDisposed();
+            return AsBool(_fnGetValueByKey.Call(registryKey));
+        }
+
+        /// <summary>Builds a registry key without touching the registry.</summary>
+        public string BuildKey(string type, params object[] keys)
+        {
+            ThrowIfDisposed();
+            return AsString(_fnBuildKey.Call(Args(type, keys)));
+        }
+
+        #endregion
+
+        #region Rules
+
+        /// <summary>
+        /// Swaps in a new rule table from Lua source, diffing the event subscriptions,
+        /// creating any newly global dots and re-evaluating everything. Existing bindings
+        /// survive, because they hold a type and keys rather than an object.
         /// </summary>
         /// <param name="luaSource">
-        /// A chunk that returns either a rule table or <c>{ nodes = ..., rules = ... }</c>.
+        /// A chunk returning either a rule table or <c>{ rules = ..., events = ... }</c>,
+        /// where <c>events</c> declares the event names the patch introduces.
         /// </param>
-        /// <returns>How many nodes changed as a result.</returns>
+        /// <returns>How many dots changed as a result.</returns>
         public int ReloadRules(string luaSource)
         {
             ThrowIfDisposed();
@@ -278,85 +334,88 @@ namespace RedDot
         }
 
         /// <summary>
-        /// Re-requires a Lua module and reloads the rules from it. Combined with a patch
-        /// root registered through <see cref="AddPatchRoot"/>, this is how a downloaded
-        /// file replaces the shipped rules with no C# change at all.
+        /// Runs boot validation over a rule chunk <em>without</em> applying it, and
+        /// returns one <c>level: message</c> line per problem.
         /// </summary>
-        public int ReloadRulesFromModule(string moduleName = "reddot.rules")
+        public IReadOnlyList<string> ValidateSource(string luaSource)
         {
             ThrowIfDisposed();
-            return AsInt(_fnReloadRulesFromModule.Call(moduleName));
+            var joined = AsString(_fnValidateSource.Call(luaSource));
+            return string.IsNullOrEmpty(joined) ? Array.Empty<string>() : joined.Split('\n');
         }
 
-        /// <summary>
-        /// Registers a script root that shadows the shipped one. Modules already loaded
-        /// keep their old body until something re-requires them.
-        /// </summary>
-        public void AddPatchRoot(string absolutePath)
+        /// <summary>Creates the keyless dots for any global type that has none yet.</summary>
+        public int CreateGlobalRedDots()
         {
             ThrowIfDisposed();
-            _loader.AddRoot(absolutePath, asPatch: true);
+            return AsInt(_fnCreateGlobalRedDots.Call());
         }
 
-        /// <summary>
-        /// Binds a view to a path. The handle is pushed the current state immediately,
-        /// so a view that binds late is correct on its first frame.
-        /// </summary>
-        /// <param name="owner">
-        /// Optional grouping key so a screen can release everything it bound in one
-        /// <see cref="UnbindAll"/> call. Defaults to the handle itself.
-        /// </param>
-        public void Bind(string path, IRedDotHandle handle, string owner = null)
+        /// <summary>The soonest scheduled reset, in unix seconds, or null when none is set.</summary>
+        public long? NextDeadline()
         {
             ThrowIfDisposed();
-            if (handle == null)
+            var results = _fnNextDeadline.Call();
+            if (results == null || results.Length == 0 || results[0] == null)
             {
-                throw new ArgumentNullException(nameof(handle));
+                return null;
             }
 
-            _fnBind.Call(path, handle, owner);
+            return Convert.ToInt64(results[0]);
         }
 
-        /// <summary>Removes one binding. Unbinding something that is not bound is a no-op.</summary>
-        public bool Unbind(string path, IRedDotHandle handle)
+        #endregion
+
+        #region Diagnostics
+
+        /// <summary>Live dots, and how many of them are keyed rather than global.</summary>
+        public (int Total, int Keyed) Counts()
         {
             ThrowIfDisposed();
-            var results = _fnUnbind.Call(path, handle);
-            return results != null && results.Length > 0 && Convert.ToBoolean(results[0]);
+            var results = _fnCounts.Call();
+            if (results == null || results.Length < 2)
+            {
+                return (0, 0);
+            }
+
+            return (Convert.ToInt32(results[0]), Convert.ToInt32(results[1]));
         }
 
-        /// <summary>Releases every binding registered under <paramref name="owner"/>.</summary>
-        public int UnbindAll(string owner)
-        {
-            ThrowIfDisposed();
-            return AsInt(_fnUnbindAll.Call(owner));
-        }
-
-        /// <summary>Bindings on one path, or on everything when <paramref name="path"/> is null.</summary>
-        public int BindingCount(string path = null)
-        {
-            ThrowIfDisposed();
-            return AsInt(_fnBindingCount.Call(path));
-        }
+        public int GetRedDotCount() => Counts().Total;
 
         /// <summary>
-        /// The whole tree as <c>path=visible:count</c> pairs, sorted and semicolon
-        /// separated. One call, no table marshalling.
+        /// Turns on a once-a-second sweep that recomputes every live dot and logs the
+        /// ones that disagree with the cache. It fixes nothing: a MISMATCH means a rule
+        /// is missing an event, and papering over it would hide that.
         /// </summary>
-        public string DumpStates()
+        public void SetReconcileEnabled(bool enabled)
         {
             ThrowIfDisposed();
-            return AsString(_fnDumpStates.Call());
+            _fnSetReconcileEnabled.Call(enabled);
         }
 
-        /// <summary>Parsed form of <see cref="DumpStates"/>.</summary>
-        public Dictionary<string, RedDotState> ReadAllStates()
+        /// <summary>Sweeps now instead of waiting for the timer. Returns the disagreement count.</summary>
+        public int Reconcile()
         {
-            var states = new Dictionary<string, RedDotState>(StringComparer.Ordinal);
-            var dump = DumpStates();
+            ThrowIfDisposed();
+            return AsInt(_fnReconcile.Call());
+        }
+
+        /// <summary>All live dots as <c>key=0|1:subscribers</c>, sorted, semicolon separated.</summary>
+        public string DumpValues()
+        {
+            ThrowIfDisposed();
+            return AsString(_fnDumpValues.Call());
+        }
+
+        /// <summary>Parsed form of <see cref="DumpValues"/>.</summary>
+        public Dictionary<string, (bool Value, int Subscribers)> ReadAllValues()
+        {
+            var values = new Dictionary<string, (bool, int)>(StringComparer.Ordinal);
+            var dump = DumpValues();
             if (string.IsNullOrEmpty(dump))
             {
-                return states;
+                return values;
             }
 
             foreach (var entry in dump.Split(';'))
@@ -373,40 +432,30 @@ namespace RedDot
                     continue;
                 }
 
-                var path = entry.Substring(0, equals);
-                var visible = entry[equals + 1] == '1';
-                var count = int.Parse(entry.Substring(colon + 1));
-                states[path] = new RedDotState(visible, count);
+                var key = entry.Substring(0, equals);
+                var value = entry[equals + 1] == '1';
+                var subscribers = int.Parse(entry.Substring(colon + 1), CultureInfo.InvariantCulture);
+                values[key] = (value, subscribers);
             }
 
-            return states;
+            return values;
         }
 
-        /// <summary>An indented, human-readable rendering of the tree, the seen set and the stats.</summary>
-        public string DebugDump()
+        /// <summary>An indented, human-readable rendering of the registry, seen set and stats.</summary>
+        public string DumpState()
         {
             ThrowIfDisposed();
-            return AsString(_fnDebugDump.Call());
+            return AsString(_fnDumpState.Call());
         }
 
-        /// <summary>Events the current rule table asked to be subscribed to, sorted.</summary>
-        public IReadOnlyList<string> SubscribedEvents()
-        {
-            ThrowIfDisposed();
-            var joined = AsString(_fnSubscribedEvents.Call());
-            if (string.IsNullOrEmpty(joined))
-            {
-                return Array.Empty<string>();
-            }
-
-            return joined.Split(';');
-        }
+        /// <summary>Events the current rules asked to be subscribed to, sorted.</summary>
+        public IReadOnlyList<string> SubscribedEvents() => _bus.SubscribedEvents();
 
         public RedDotStats Stats()
         {
             ThrowIfDisposed();
             var results = _fnStats.Call();
-            if (results == null || results.Length < 5)
+            if (results == null || results.Length < 6)
             {
                 return default;
             }
@@ -416,7 +465,8 @@ namespace RedDot
                 Convert.ToInt32(results[1]),
                 Convert.ToInt32(results[2]),
                 Convert.ToInt32(results[3]),
-                Convert.ToInt32(results[4]));
+                Convert.ToInt32(results[4]),
+                Convert.ToInt32(results[5]));
         }
 
         public void ResetStats()
@@ -425,13 +475,23 @@ namespace RedDot
             _fnResetStats.Call();
         }
 
+        /// <summary>
+        /// Registers a script root that shadows the shipped one. Modules already loaded
+        /// keep their old body until something re-requires them.
+        /// </summary>
+        public void AddPatchRoot(string absolutePath)
+        {
+            ThrowIfDisposed();
+            _loader.AddRoot(absolutePath, asPatch: true);
+        }
+
         #endregion
 
         #region Lua-facing host
 
         /// <summary>
-        /// The object Lua sees as <c>CS_HOST</c>. It is the manager's event bus adapter
-        /// and its logger at once, and the way change notifications get back to C#.
+        /// The object Lua sees as <c>CS_HOST</c>: the manager's event bus adapter and its
+        /// logger at once.
         /// </summary>
         public sealed class LuaHost
         {
@@ -442,13 +502,13 @@ namespace RedDot
                 _bridge = bridge;
             }
 
-            /// <summary>Lua asks for an event to be forwarded. Called on boot and on every reload.</summary>
+            /// <summary>Lua asks for an event to be forwarded. Called on boot and every reload.</summary>
             public void Subscribe(string eventName)
             {
                 _bridge.SubscribeToBus(eventName);
             }
 
-            /// <summary>Lua no longer has a rule triggered by this event.</summary>
+            /// <summary>No rule is triggered by this event any more.</summary>
             public void Unsubscribe(string eventName)
             {
                 _bridge.UnsubscribeFromBus(eventName);
@@ -457,11 +517,6 @@ namespace RedDot
             public void Log(string message)
             {
                 _bridge._log(message);
-            }
-
-            public void OnChanged(string path, bool visible, int count)
-            {
-                _bridge.Changed?.Invoke(path, new RedDotState(visible, count));
             }
         }
 
@@ -493,12 +548,38 @@ namespace RedDot
                 return;
             }
 
-            _fnDispatch.Call(eventName, payload);
+            _fnQueueEvent.Call(eventName, payload);
         }
 
         #endregion
 
         #region Plumbing
+
+        /// <summary>
+        /// Builds the argument array for a variadic Lua call. Key values keep their type:
+        /// an int stays an int so a rule can hand it straight back to a C# accessor.
+        /// </summary>
+        private static object[] Args(string type, object[] keys)
+        {
+            if (keys == null || keys.Length == 0)
+            {
+                return new object[] { type };
+            }
+
+            var args = new object[keys.Length + 1];
+            args[0] = type;
+            Array.Copy(keys, 0, args, 1, keys.Length);
+            return args;
+        }
+
+        private static object[] Args(object first, string type, object[] keys)
+        {
+            var tail = Args(type, keys);
+            var args = new object[tail.Length + 1];
+            args[0] = first;
+            Array.Copy(tail, 0, args, 1, tail.Length);
+            return args;
+        }
 
         private LuaFunction Resolve(string path)
         {
@@ -522,6 +603,16 @@ namespace RedDot
             }
 
             return Convert.ToInt32(results[0]);
+        }
+
+        private static bool AsBool(object[] results)
+        {
+            if (results == null || results.Length == 0 || results[0] == null)
+            {
+                return false;
+            }
+
+            return Convert.ToBoolean(results[0]);
         }
 
         private static string AsString(object[] results)
@@ -575,74 +666,108 @@ namespace RedDot
 
         /// <summary>
         /// The one piece of Lua that lives in C#: it wires the modules to the host
-        /// objects and exposes a flat function surface, so that everything the bridge
-        /// calls is a plain <c>RedDot.something</c> with string and number arguments.
+        /// objects and exposes a flat function surface, so everything the bridge calls is
+        /// a plain <c>RedDot.something</c> taking strings, numbers and booleans.
         /// </summary>
         private const string Bootstrap = @"
 local manager_mod = require('reddot.manager')
-local binder_mod  = require('reddot.binder')
-local types       = require('reddot.types')
-local rules       = require('reddot.rules')
+local RedDotType  = require('reddot.RedDotType')
+local RedDotEvent = require('reddot.RedDotEvent')
+local rules       = require('reddot.RedDotRules')
+
+-- The one global rules read through. Everything a condition may look at hangs
+-- off it, and nothing else is reachable from a rule.
+Game = CS_CTX
 
 local host = CS_HOST
 local function log(message) host:Log(message) end
 
 local RedDot = {}
+RedDot.Type  = RedDotType
+RedDot.Event = RedDotEvent
 
-RedDot.types   = types
 RedDot.manager = manager_mod.new({
-    nodes       = types.nodes,
     rules       = rules,
     bus         = host,
-    ctx         = CS_CTX,
+    clock       = CS_CTX.Clock,
+    knownEvents = RedDotEvent,
     seenBackend = CS_SEEN,
     log         = log,
 })
-RedDot.binder = binder_mod.new(RedDot.manager, log)
 
-RedDot.manager:addListener(function(path, state)
-    host:OnChanged(path, state.visible, state.count)
-end)
+-- Global dots exist from boot, so a lobby button is right before its screen has
+-- ever been opened.
+RedDot.manager:CreateGlobalRedDots()
 
-function RedDot.dispatch(name, payload) return RedDot.manager:dispatch(name, payload) end
-function RedDot.flush()                 return RedDot.manager:flush() end
-function RedDot.markSeen(path)          return RedDot.manager:markSeen(path) end
-function RedDot.getState(path)          return RedDot.manager:getState(path) end
-function RedDot.dumpStates()            return RedDot.manager:dumpStates() end
-function RedDot.debugDump()             return RedDot.manager:debugDump() end
-function RedDot.resetStats()            RedDot.manager:resetStats() end
+function RedDot.queueEvent(name, payload)  return RedDot.manager:QueueEvent(name, payload) end
+function RedDot.tick()                     return RedDot.manager:Tick() end
+function RedDot.clearSubscriptions()       return RedDot.manager:ClearSubscriptions() end
+function RedDot.createGlobalRedDots()      return RedDot.manager:CreateGlobalRedDots() end
+function RedDot.dumpState()                return RedDot.manager:DumpState() end
+function RedDot.dumpValues()               return RedDot.manager:DumpValues() end
+function RedDot.resetStats()               RedDot.manager:ResetStats() end
+function RedDot.reconcile()                return RedDot.manager:Reconcile() end
+function RedDot.nextDeadline()             return RedDot.manager:NextDeadline() end
 
-function RedDot.subscribedEvents()
-    return table.concat(RedDot.manager:subscribedEvents(), ';')
+function RedDot.subscribe(handle, t, ...)  return RedDot.manager:Subscribe(handle, t, ...) end
+function RedDot.unsubscribe(key, handle)   return RedDot.manager:Unsubscribe(key, handle) end
+function RedDot.subscriberCount(key)       return RedDot.manager:SubscriberCount(key) end
+
+function RedDot.markSeen(t, ...)           return RedDot.manager:MarkSeen(t, ...) end
+function RedDot.isSeen(t, ...)             return RedDot.manager:IsSeen(t, ...) end
+function RedDot.getValue(t, ...)           return RedDot.manager:GetValue(t, ...) end
+function RedDot.getValueByKey(key)         return RedDot.manager:GetValueByKey(key) end
+
+function RedDot.buildKey(t, ...)
+    return manager_mod.BuildKey(t, { ... }, select('#', ...))
+end
+
+function RedDot.counts()
+    return RedDot.manager:GetRedDotCount(), RedDot.manager:GetKeyedCount()
+end
+
+function RedDot.setReconcileEnabled(enabled)
+    return RedDot.manager:SetReconcileEnabled(enabled)
 end
 
 function RedDot.stats()
     local s = RedDot.manager.stats
-    return s.flushes, s.leafEvaluations, s.aggregations, s.notifications, s.dispatches
+    return s.events, s.queued, s.computes, s.notifications, s.drains, s.mismatches
 end
-
-function RedDot.bind(path, handle, owner) return RedDot.binder:bind(path, handle, owner) end
-function RedDot.unbind(path, handle)      return RedDot.binder:unbind(path, handle) end
-function RedDot.unbindAll(owner)          return RedDot.binder:unbindAll(owner) end
-function RedDot.bindingCount(path)        return RedDot.binder:bindingCount(path) end
 
 -- Compiles a patch chunk and hands whatever it returns to the manager. Lua 5.1
 -- and 5.3 disagree about the name of the compiler, hence the lookup.
-function RedDot.reloadRules(source, chunkName)
-    local compile = loadstring or load
-    local chunk, err = compile(source, chunkName or 'reddot_patch')
+local function compile(source, chunkName)
+    local loader = loadstring or load
+    local chunk, err = loader(source, chunkName or 'reddot_patch')
     if not chunk then
         error('reddot: patch failed to compile: ' .. tostring(err), 0)
     end
-    return RedDot.manager:reloadRules(chunk())
+    return chunk
 end
 
--- Drops the module from the cache first, so the loader gets another chance to
--- resolve it -- which is how a patch root shadows the shipped file.
-function RedDot.reloadRulesFromModule(moduleName)
-    moduleName = moduleName or 'reddot.rules'
-    package.loaded[moduleName] = nil
-    return RedDot.manager:reloadRules(require(moduleName))
+function RedDot.reloadRules(source)
+    return RedDot.manager:ReloadRules(compile(source)())
+end
+
+-- Validates a rule chunk without applying it, so a build step or a test can ask
+-- whether a patch is sane before it ever reaches a player.
+function RedDot.validateSource(source)
+    local spec = compile(source, 'reddot_validate')()
+    local ruleTable, extra = spec, nil
+    if type(spec) == 'table' and spec.rules ~= nil then
+        ruleTable, extra = spec.rules, spec.events
+    end
+
+    local known = {}
+    for _, name in pairs(RedDotEvent) do known[name] = true end
+    for _, name in pairs(manager_mod.entriesOf(extra)) do known[name] = true end
+
+    local lines = {}
+    for _, problem in ipairs(manager_mod.ValidateRules(ruleTable, known)) do
+        lines[#lines + 1] = problem.level .. ': ' .. problem.message
+    end
+    return table.concat(lines, '\n')
 end
 
 _G.RedDot = RedDot

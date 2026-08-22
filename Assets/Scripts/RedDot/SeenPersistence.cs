@@ -52,6 +52,13 @@ namespace RedDot
             SaveCount = 0;
             LoadCount = 0;
         }
+
+        /// <summary>Plants a blob without counting it as a write. For tests that need a
+        /// corrupt or stale save on disk.</summary>
+        public void Overwrite(string blob)
+        {
+            Blob = blob;
+        }
     }
 
     /// <summary>

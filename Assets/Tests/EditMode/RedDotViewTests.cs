@@ -8,7 +8,7 @@ using UnityEngine;
 namespace RedDot.Tests
 {
     /// <summary>
-    /// Tests for the FairyGUI view layer.
+    /// Tests for the FairyGUI view layer and the binding lifetime.
     /// </summary>
     /// <remarks>
     /// The components here are the same ones <see cref="DemoUIFactory"/> builds for the
@@ -19,11 +19,19 @@ namespace RedDot.Tests
     [TestFixture]
     public sealed class RedDotViewTests
     {
-        private const string Inbox = "Main.Mail.Inbox";
-        private const string Daily = "Main.Quests.Daily";
-        private const string Mail = "Main.Mail";
+        private const string TypeMail = "Mail";
+        private const string TypeMailItem = "MailItem";
+        private const string TypeQuestItem = "QuestItem";
+        private const string TypeLimitedOffer = "LimitedOffer";
 
         private readonly List<GObject> _created = new List<GObject>();
+
+        private EventBus _bus;
+        private FakeClock _clock;
+        private FakeMailService _mail;
+        private FakeQuestService _quests;
+        private RedDotBridge _bridge;
+        private RedDotBinder _binder;
 
         [SetUp]
         public void SetUp()
@@ -69,17 +77,41 @@ namespace RedDot.Tests
 
         private static void Apply(RedDotView view, bool visible, int count)
         {
-            view.SetRedDot("Main.Test", visible, count);
+            view.Apply(visible, count);
         }
 
         /// <summary>
         /// Whether a display gear is currently showing this child. A gear does not touch
-        /// the `visible` flag -- it takes the object out of the render list -- so this is
+        /// the `visible` flag — it takes the object out of the render list — so this is
         /// what "the controller hid it" actually looks like from outside.
         /// </summary>
         private static bool ShownByGear(GComponent host, string childName)
         {
             return Child(host, childName).displayObject.parent != null;
+        }
+
+        private static GObject Child(GComponent host, string name)
+        {
+            var badge = (GComponent)host.GetChild(RedDotView.BadgeChildName);
+            return badge.GetChild(name);
+        }
+
+        private void StartEngine()
+        {
+            _bus = new EventBus();
+            _clock = new FakeClock();
+            _mail = new FakeMailService(_bus);
+            _quests = new FakeQuestService(_bus);
+
+            _bridge = new RedDotBridge(new RedDotBridgeOptions
+            {
+                Bus = _bus,
+                Context = new RedDotContext(_mail, _quests, new FakeShopService(_bus, _clock), _clock),
+                SeenPersistence = new InMemorySeenPersistence(),
+                Log = message => TestContext.WriteLine("[lua] " + message),
+            });
+
+            _binder = new RedDotBinder(_bridge);
         }
 
         #region State selection
@@ -98,6 +130,21 @@ namespace RedDot.Tests
         }
 
         [Test]
+        public void ADotWithNoNumberIsWhatTheEngineAsksFor()
+        {
+            var host = NewHost();
+            var view = new RedDotView(host);
+
+            // The engine reports a boolean, so this is the only shape it ever produces.
+            view.SetRedDot("Mail", true);
+
+            Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageDot));
+            Assert.That(view.Key, Is.EqualTo("Mail"));
+            Assert.That(ShownByGear(host, "dot"), Is.True);
+            Assert.That(ShownByGear(host, RedDotView.CountChildName), Is.False);
+        }
+
+        [Test]
         public void ASingleItemStaysAPlainDot()
         {
             var host = NewHost();
@@ -107,20 +154,6 @@ namespace RedDot.Tests
 
             Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageDot),
                 "a lone '1' next to an icon is decoration, not information");
-            Assert.That(ShownByGear(host, "dot"), Is.True);
-            Assert.That(ShownByGear(host, RedDotView.CountChildName), Is.False);
-        }
-
-        [Test]
-        public void ADotOnlyNodeWithNoCountStaysADot()
-        {
-            var host = NewHost();
-            var view = new RedDotView(host);
-
-            // What an `any` policy parent reports: visible, but deliberately countless.
-            Apply(view, true, 0);
-
-            Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageDot));
         }
 
         [Test]
@@ -164,14 +197,21 @@ namespace RedDot.Tests
 
             Apply(view, true, 1);
             Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageDot));
-            Assert.That(ShownByGear(host, RedDotView.CountChildName), Is.False);
 
             Apply(view, false, 0);
             Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageHidden));
 
             Apply(view, true, 12);
             Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageCount));
-            Assert.That(view.CountText, Is.EqualTo("12"));
+        }
+
+        [Test]
+        public void TheBadgeNeverEatsTheClickMeantForTheButton()
+        {
+            var host = NewHost();
+            var _ = new RedDotView(host);
+
+            Assert.That(host.GetChild(RedDotView.BadgeChildName).touchable, Is.False);
         }
 
         #endregion
@@ -225,7 +265,6 @@ namespace RedDot.Tests
             Assert.That(view.HasBadge, Is.False);
             Assert.DoesNotThrow(() => Apply(view, true, 5),
                 "a screen the designer has not finished must not take the game down");
-            Assert.That(view.Count, Is.EqualTo(5));
         }
 
         [Test]
@@ -235,130 +274,113 @@ namespace RedDot.Tests
             var view = new RedDotView(host);
             host.Dispose();
 
-            Assert.DoesNotThrow(() => Apply(view, true, 3));
+            Assert.DoesNotThrow(() => view.SetRedDot("Mail", true));
         }
 
         #endregion
 
         #region Binding lifetime
 
-        private EventBus _bus;
-        private FakeMailService _mail;
-        private FakeQuestService _quests;
-        private RedDotBridge _bridge;
-        private RedDotBinder _binder;
-
-        private void StartEngine()
-        {
-            _bus = new EventBus();
-            _mail = new FakeMailService(_bus);
-            _quests = new FakeQuestService(_bus);
-
-            _bridge = new RedDotBridge(new RedDotBridgeOptions
-            {
-                Bus = _bus,
-                Context = new RedDotContext(_mail, _quests, new FakeShopService(_bus)),
-                SeenPersistence = new InMemorySeenPersistence(),
-                Log = message => TestContext.WriteLine("[lua] " + message),
-            });
-
-            _binder = new RedDotBinder(_bridge);
-        }
-
         [Test]
-        public void BindingPushesTheCurrentStateStraightIntoTheBadge()
+        public void BindingPushesTheCurrentValueStraightIntoTheBadge()
         {
             StartEngine();
-            _mail.Receive(3);
+            _mail.Receive();
             _bridge.Flush();
 
             var host = NewHost();
-            var view = _binder.Bind(host, Inbox, "MailScreen");
+            var view = _binder.Bind(host, TypeMailItem, 1);
 
-            Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageCount));
-            Assert.That(view.CountText, Is.EqualTo("3"),
-                "a screen that opens late is still correct on its first frame");
+            Assert.That(_binder.KeyOf(host), Is.EqualTo("MailItem|1"));
+            Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageDot),
+                "a row that appears late is still correct on its first frame");
         }
 
         [Test]
         public void ABoundBadgeFollowsTheEngine()
         {
             StartEngine();
+            var mailId = _mail.Receive();
+            _bridge.Flush();
+
             var host = NewHost();
-            var view = _binder.Bind(host, Inbox, "MailScreen");
-            Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageHidden));
+            var view = _binder.Bind(host, TypeMailItem, mailId);
+            Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageDot));
 
-            _mail.Receive(2);
+            _mail.Open(mailId);
             _bridge.Flush();
-            Assert.That(view.CountText, Is.EqualTo("2"));
 
-            _mail.ReadAll();
-            _bridge.Flush();
             Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageHidden));
         }
 
         /// <summary>
-        /// The regression this class exists for: a component that comes back out of a pool
-        /// and is bound to a different node must not still be listening to the old one.
+        /// The regression this class exists for: a row that comes back out of a pool and
+        /// is bound to a different mail must not still be listening to the old one — and
+        /// the keyed dot it was holding open must go with it.
         /// </summary>
         [Test]
-        public void RebindingAPooledComponentDropsTheOldBindingEntirely()
+        public void RebindingAPooledRowDropsTheOldBindingAndItsDot()
         {
             StartEngine();
-            _mail.Receive(3);
+            var first = _mail.Receive();
+            var second = _mail.Receive();
+            _bridge.Flush();
+            _mail.Open(second);
             _bridge.Flush();
 
             var host = NewHost();
-            var firstView = _binder.Bind(host, Inbox, "MailScreen");
-            Assert.That(firstView.CountText, Is.EqualTo("3"));
+            var firstView = _binder.Bind(host, TypeMailItem, first);
+            Assert.That(firstView.Visible, Is.True);
+            Assert.That(_bridge.Counts().Keyed, Is.EqualTo(1));
 
-            // The list recycles the row for a different node.
-            var secondView = _binder.Bind(host, Daily, "QuestsScreen");
+            // The list recycles the row for the mail below it.
+            var secondView = _binder.Bind(host, TypeMailItem, second);
 
             Assert.That(_binder.Count, Is.EqualTo(1), "one component, one binding");
-            Assert.That(_binder.PathOf(host), Is.EqualTo(Daily));
-            Assert.That(_bridge.BindingCount(Inbox), Is.Zero, "the old callback is gone from Lua");
-            Assert.That(_bridge.BindingCount(Daily), Is.EqualTo(1));
+            Assert.That(_binder.KeyOf(host), Is.EqualTo("MailItem|" + second));
+            Assert.That(_bridge.SubscriberCount("MailItem|" + first), Is.Zero);
+            Assert.That(_bridge.Counts().Keyed, Is.EqualTo(1),
+                "the dot the old row was holding open was destroyed with the subscription");
+            Assert.That(secondView.Visible, Is.False, "the second mail is already read");
 
-            // The old node keeps changing; nothing must arrive.
-            _mail.Receive(5);
-            _quests.CompleteDaily(2);
+            // The old mail keeps changing; nothing must arrive.
+            _mail.Open(first);
             _bridge.Flush();
 
-            Assert.That(firstView.Count, Is.EqualTo(3),
-                "the stale view never heard about the five new mails");
-            Assert.That(secondView.CountText, Is.EqualTo("2"));
-            Assert.That(secondView.Path, Is.EqualTo(Daily));
+            Assert.That(firstView.Visible, Is.True, "the stale view never heard that it was read");
         }
 
         [Test]
-        public void RebindingToTheSamePathDoesNotStackCallbacks()
+        public void RebindingToTheSameDotDoesNotStackSubscriptions()
         {
             StartEngine();
             var host = NewHost();
 
-            _binder.Bind(host, Inbox, "MailScreen");
-            _binder.Bind(host, Inbox, "MailScreen");
-            _binder.Bind(host, Inbox, "MailScreen");
+            _binder.Bind(host, TypeMailItem, 1);
+            _binder.Bind(host, TypeMailItem, 1);
+            _binder.Bind(host, TypeMailItem, 1);
 
-            Assert.That(_bridge.BindingCount(Inbox), Is.EqualTo(1));
+            Assert.That(_bridge.SubscriberCount("MailItem|1"), Is.EqualTo(1));
             Assert.That(_binder.Count, Is.EqualTo(1));
         }
 
         [Test]
-        public void UnbindReleasesTheComponentAndIsSafeToRepeat()
+        public void UnbindReleasesTheRowAndIsSafeToRepeat()
         {
             StartEngine();
+            var mailId = _mail.Receive();
+            _bridge.Flush();
+
             var host = NewHost();
-            var view = _binder.Bind(host, Inbox, "MailScreen");
+            var view = _binder.Bind(host, TypeMailItem, mailId);
 
             Assert.That(_binder.Unbind(host), Is.True);
             Assert.That(_binder.Unbind(host), Is.False, "unbinding twice is a no-op, not an error");
-            Assert.That(_bridge.BindingCount(Inbox), Is.Zero);
+            Assert.That(_bridge.Counts().Keyed, Is.Zero);
 
-            _mail.Receive(4);
+            _mail.Open(mailId);
             _bridge.Flush();
-            Assert.That(view.Count, Is.Zero);
+            Assert.That(view.Visible, Is.True, "the released view heard nothing more");
         }
 
         [Test]
@@ -366,38 +388,40 @@ namespace RedDot.Tests
         {
             StartEngine();
             var inboxHost = NewHost();
-            var dailyHost = NewHost();
+            var questHost = NewHost();
             var otherHost = NewHost();
 
-            _binder.Bind(inboxHost, Inbox, "MailScreen");
-            _binder.Bind(dailyHost, Daily, "MailScreen");
-            _binder.Bind(otherHost, Mail, "MainScreen");
+            _binder.BindOwned(inboxHost, "MailScreen", TypeMailItem, 1);
+            _binder.BindOwned(questHost, "MailScreen", TypeQuestItem, 1, 1);
+            _binder.BindOwned(otherHost, "MainScreen", TypeMail);
             Assert.That(_binder.Count, Is.EqualTo(3));
+            Assert.That(_bridge.Counts().Keyed, Is.EqualTo(2));
 
-            _binder.UnbindAll("MailScreen");
+            Assert.That(_binder.UnbindAll("MailScreen"), Is.EqualTo(2));
 
             Assert.That(_binder.Count, Is.EqualTo(1), "only the other screen survives");
-            Assert.That(_bridge.BindingCount(Inbox), Is.Zero);
-            Assert.That(_bridge.BindingCount(Daily), Is.Zero);
-            Assert.That(_bridge.BindingCount(Mail), Is.EqualTo(1));
-            Assert.That(_binder.PathOf(otherHost), Is.EqualTo(Mail));
+            Assert.That(_bridge.Counts().Keyed, Is.Zero, "and its keyed dots are gone");
+            Assert.That(_binder.KeyOf(otherHost), Is.EqualTo(TypeMail));
         }
 
         [Test]
         public void ADisposedComponentReleasesItselfOnTheNextUpdate()
         {
             StartEngine();
+            var mailId = _mail.Receive();
+            _bridge.Flush();
+
             var host = NewHost();
-            _binder.Bind(host, Inbox, "MailScreen");
+            _binder.Bind(host, TypeMailItem, mailId);
 
             // Screen teardown, without anybody telling the binder about it.
             host.Dispose();
 
-            _mail.Receive(1);
+            _mail.Open(mailId);
             _bridge.Flush();
 
             Assert.That(_binder.Count, Is.Zero, "the update found a dead component and let go");
-            Assert.That(_bridge.BindingCount(Inbox), Is.Zero);
+            Assert.That(_bridge.Counts().Keyed, Is.Zero);
         }
 
         [Test]
@@ -405,23 +429,24 @@ namespace RedDot.Tests
         {
             StartEngine();
             var host = NewHost();
-            _binder.Bind(host, Inbox, "MailScreen");
+            _binder.Bind(host, TypeMailItem, 1);
             host.Dispose();
 
             Assert.That(_binder.ReapDisposed(), Is.EqualTo(1));
-            Assert.That(_bridge.BindingCount(Inbox), Is.Zero);
+            Assert.That(_bridge.Counts().Keyed, Is.Zero);
         }
 
         [Test]
-        public void ABindingSurvivesAHotReloadThatIntroducesItsNode()
+        public void ABindingSurvivesAHotReloadThatIntroducesItsType()
         {
             StartEngine();
             var host = NewHost();
-            var view = _binder.Bind(host, "Main.Shop.LimitedOffer", "ShopScreen");
+            var view = _binder.Bind(host, TypeLimitedOffer);
 
             Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageHidden),
-                "binding a path with no rule yet is legal and simply reads as hidden");
+                "binding a type with no rule yet is legal and simply reads as off");
 
+            _bridge.Context.SetCounter("shop.limitedOffer", 1);
             _bridge.ReloadRules(System.IO.File.ReadAllText(
                 System.IO.Path.Combine(Application.dataPath, "Lua/patches/rules_patch_example.lua")));
 
@@ -432,10 +457,80 @@ namespace RedDot.Tests
 
         #endregion
 
-        private static GObject Child(GComponent host, string name)
+        #region The active kill switch
+
+        [Test]
+        public void AnInactiveBadgeStaysHiddenEvenWhenTheRuleSaysYes()
         {
-            var badge = (GComponent)host.GetChild(RedDotView.BadgeChildName);
-            return badge.GetChild(name);
+            StartEngine();
+            var mailId = _mail.Receive();
+            _bridge.Flush();
+
+            var host = NewHost();
+            var view = _binder.Bind(host, TypeMailItem, mailId);
+            Assert.That(view.Visible, Is.True);
+
+            Assert.That(_binder.SetRedDotActive(host, false), Is.True);
+
+            Assert.That(view.Visible, Is.False, "the screen vetoed it");
+            Assert.That(view.CurrentPage, Is.EqualTo(RedDotView.PageHidden));
+            Assert.That(_bridge.GetValue(TypeMailItem, mailId), Is.True,
+                "and the rule still says what it always said -- the veto is a view concern");
         }
+
+        [Test]
+        public void ReactivatingRestoresWhateverTheRuleSaysNow()
+        {
+            StartEngine();
+            var mailId = _mail.Receive();
+            _bridge.Flush();
+
+            var host = NewHost();
+            var view = _binder.Bind(host, TypeMailItem, mailId);
+            _binder.SetRedDotActive(host, false);
+            Assert.That(view.Visible, Is.False);
+
+            _binder.SetRedDotActive(host, true);
+            Assert.That(view.Visible, Is.True);
+
+            // And it tracks changes made while it was switched off.
+            _binder.SetRedDotActive(host, false);
+            _mail.Open(mailId);
+            _bridge.Flush();
+            _binder.SetRedDotActive(host, true);
+
+            Assert.That(view.Visible, Is.False, "it came back to the current answer, not the old one");
+        }
+
+        [Test]
+        public void AnInactiveBindingStillTracksTheRuleUnderneath()
+        {
+            StartEngine();
+            var host = NewHost();
+            _binder.Bind(host, TypeMailItem, 1);
+            _binder.SetRedDotActive(host, false);
+
+            var mailId = _mail.Receive();
+            Assert.That(mailId, Is.EqualTo(1));
+            _bridge.Flush();
+
+            Assert.That(_binder.ViewOf(host).Visible, Is.False, "still vetoed");
+            Assert.That(_bridge.GetValue(TypeMailItem, 1), Is.True, "but the dot is on underneath");
+
+            _binder.SetRedDotActive(host, true);
+            Assert.That(_binder.ViewOf(host).Visible, Is.True);
+        }
+
+        [Test]
+        public void SettingActiveOnSomethingUnboundIsANoOp()
+        {
+            StartEngine();
+            var host = NewHost();
+
+            Assert.That(_binder.SetRedDotActive(host, false), Is.False);
+            Assert.That(_binder.IsRedDotActive(host), Is.False);
+        }
+
+        #endregion
     }
 }

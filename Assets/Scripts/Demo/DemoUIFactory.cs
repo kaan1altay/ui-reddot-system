@@ -193,6 +193,47 @@ namespace RedDot.Demo
             return panel;
         }
 
+        /// <summary>
+        /// The mail list: a plain scrolling GList. The authored package uses an item
+        /// component from its own pool; here the demo hands rows in directly.
+        /// </summary>
+        public static GList CreateMailList(string name, int height = 520)
+        {
+            var list = new GList { name = name };
+            list.SetSize(ButtonWidth, height);
+            return list;
+        }
+
+        /// <summary>
+        /// One mail row: a title and a badge, with the same child names the authored
+        /// `MailListItem` uses.
+        /// </summary>
+        public static GComponent CreateMailListItem()
+        {
+            var item = new GComponent { name = "MailListItem" };
+            item.SetSize(ButtonWidth, 72);
+            item.touchable = true;
+
+            var background = new GGraph { name = "bg" };
+            background.DrawRect(ButtonWidth, 72, 1, Ink, ButtonFill);
+            item.AddChild(background);
+
+            var label = new GTextField { name = "title" };
+            label.SetSize(ButtonWidth - BadgeSize - 24, 72);
+            label.SetXY(16, 0);
+            label.align = AlignType.Left;
+            label.verticalAlign = VertAlignType.Middle;
+            label.textFormat = new TextFormat { size = 22, color = Ink };
+            label.touchable = false;
+            item.AddChild(label);
+
+            var badge = CreateBadge();
+            badge.SetXY(ButtonWidth - BadgeSize - 12, 13);
+            item.AddChild(badge);
+
+            return item;
+        }
+
         #endregion
 
         #region Layout helper
