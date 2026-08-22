@@ -68,6 +68,12 @@ namespace RedDot
     /// A view that wants to be told when a red dot changes. Implemented by the FairyGUI
     /// adapter, and by test doubles.
     /// </summary>
+    /// <remarks>
+    /// Implement <see cref="SetRedDot"/> implicitly, as a public method. Lua reaches a
+    /// handle by member name through xLua reflection, and an explicit interface
+    /// implementation is a private method under a mangled name -- so it compiles, binds,
+    /// and then silently never fires.
+    /// </remarks>
     public interface IRedDotHandle
     {
         void SetRedDot(string path, bool visible, int count);

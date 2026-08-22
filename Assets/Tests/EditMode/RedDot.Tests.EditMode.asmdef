@@ -4,6 +4,7 @@
     "references": [
         "RedDot.Runtime",
         "XLua",
+        "FairyGUI",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

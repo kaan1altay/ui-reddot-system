@@ -2,7 +2,8 @@
     "name": "RedDot.Runtime",
     "rootNamespace": "RedDot",
     "references": [
-        "XLua"
+        "XLua",
+        "FairyGUI"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
