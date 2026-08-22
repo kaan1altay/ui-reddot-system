@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-08-22 — end of Slice 1.
+Last updated: 2026-08-22 — end of Slice 2.
 
 ## Environment
 
@@ -23,8 +23,9 @@ was left out and why.
 | --- | --- |
 | `XLua`, `XLua.Editor` | vendored, with two assembly definitions added locally so project code can reference them |
 | `FairyGUI` | vendored, upstream asmdef used as-is |
-| `RedDot.Runtime` | `Assets/Scripts` — bridge, event bus, context, fake game services |
+| `RedDot.Runtime` | `Assets/Scripts` — bridge, view layer, event bus, context, demo |
 | `RedDot.Tests.EditMode` | `Assets/Tests/EditMode` |
+| `RedDot.Tests.PlayMode` | `Assets/Tests/PlayMode` |
 
 ## What Slice 1 covers
 
@@ -67,8 +68,8 @@ The complete engine, with no UI attached yet.
   accessor. `ctx:Counter(key)` is the deliberate escape hatch for values live-ops sends
   after the client shipped.
 - **The loader searches an ordered list of roots.** Roots registered as patches go in
-  front, so a downloaded `reddot/rules.lua` shadows the shipped one. Slice 3 turns this
-  into the "Apply patch" button.
+  front, so a downloaded `reddot/rules.lua` shadows the shipped one. The demo's "Apply
+  Lua patch" button is the other half of the same seam.
 - **C# knows nothing about any specific badge.** Search the C# sources for "mail" and
   the only hits are the fake game managers and the test fixture.
 
@@ -95,17 +96,134 @@ Assets/Tests/EditMode/
   RedDotCoreTests.cs        35 NUnit cases
 ```
 
+## What Slice 2 covers
+
+The view layer, a playable demo, and the authoring spec for the UI package.
+
+### The badge contract
+
+`RedDotView` drives one FairyGUI badge purely by convention, so a designer can add a
+badge to any component without a programmer touching anything. Inside a host component
+it looks for a child named `redDot`, and inside that a controller named `state` with the
+pages `hidden` / `dot` / `count`, plus an optional text field named `count`.
+
+| Engine state | Page | Why |
+| --- | --- | --- |
+| hidden | `hidden` | — |
+| visible, count 0 | `dot` | what an `any` policy parent reports: deliberately countless |
+| visible, count 1 | `dot` | a lone "1" beside an icon is decoration, not information |
+| visible, count 2–99 | `count` | the number says something |
+| visible, count > 99 | `count`, text `99+` | so the badge never has to be wider than two digits |
+
+Every piece is optional and every missing piece degrades instead of throwing: no
+controller falls back to plain visibility, no `count` field falls back to the dot, no
+`redDot` child at all makes the view inert. A half-authored UI package is a normal state
+during authoring and it must not take the screen down.
+
+The full authoring instructions are in [PACKAGE_SPEC.md](PACKAGE_SPEC.md).
+
+### Binding lifetime
+
+`RedDotBinder` is what makes the raw `RedDotBridge.Bind` seam safe to use from UI code,
+where components are disposed by screen teardown and recycled by list pools in an order
+nobody controls. It guarantees two things:
+
+- **One binding per component.** Binding a component that is already bound releases the
+  previous binding first, so a pooled row rebound to a different node can never still
+  light up for the node it used to be. This is the regression the suite exists for.
+- **Disposed components release themselves.** A component that leaves the stage while
+  disposed unbinds immediately; and any update aimed at a disposed component unbinds it
+  on the spot. The second path is the one that matters, because a component disposed
+  before it ever reached the stage never raises the first.
+
+`UnbindAll(owner)` releases a whole screen in one call, through the Lua binder's own
+owner index.
+
+### The demo
+
+`Assets/Scenes/RedDotDemo.unity` — a fake game with four screens. What C# knows about
+the badge tree is one table of `(screen, child, path)` rows in `DemoMain`; adding a badge
+is a row, and adding a *rule* needs no C# at all.
+
+- **Main** — Mail / Quests / Shop tabs, each with a badge on the aggregate node, plus the
+  debug panel.
+- **Mail / Quests / Shop** — leaf badges and buttons that poke the fake services. Opening
+  a leaf section marks it seen. Reaching the Mail tab deliberately does not: that is not
+  the same as having read the notice inside it.
+- **Apply Lua patch** — loads `Assets/Lua/patches/rules_patch_example.lua` through
+  `ReloadRules`. It introduces `Main.Shop.LimitedOffer`, a node no C# file mentions, and
+  the Shop tab lights up through it. **Start limited offer** raises
+  `LimitedOfferStarted`, the event the patch subscribed to as part of the reload's
+  subscription diff — before the patch, nobody listened to it and it cost a dictionary
+  miss. **Dump tree** logs `debugDump()`.
+
+`RedDotDriver` is the entire per-frame cost of the system: one `Flush()` in `LateUpdate`,
+which returns immediately when nothing is dirty. It runs late so badges settle once, at
+the end of the frame that caused them, instead of flickering through intermediate states.
+
+### Graceful missing-package mode
+
+The `.fui` package does not exist yet, so `DemoMain` builds the same screens in code and
+says so:
+
+```
+[RedDotDemo] UI package 'RedDotDemo' not found -- using fallback UI.
+Author the package per docs/PACKAGE_SPEC.md and export it to Assets/FairyGUI-Packages/
+```
+
+`DemoUIFactory` builds real `GComponent`s with a real `state` controller and real display
+gears, so the fallback behaves exactly like an authored package rather than approximating
+one. That makes it both the placeholder UI and the EditMode tests' fixtures: the view
+tests drive a controller that really hides real children. A package that is only partly
+authored also degrades per screen — a missing component falls back to its code-built
+version and logs which one.
+
+### Files added
+
+```
+Assets/Scripts/RedDot/
+  RedDotView.cs             badge adapter: page selection, "99+" cap, graceful degrading
+  RedDotBinder.cs           component-scoped binding with pooled-reuse and disposal safety
+
+Assets/Scripts/Demo/
+  DemoMain.cs               boot, screen flow, the (screen, child, path) table, debug panel
+  DemoUIFactory.cs          the code-built screens: fallback UI and test fixtures
+  RedDotDriver.cs           one Flush per frame, in LateUpdate
+  FairyGuiEnvironment.cs    default font setup (Unity 6 no longer serves Arial.ttf)
+
+Assets/Editor/
+  DemoSceneBuilder.cs       generates the demo scene; RedDot > Rebuild demo scene
+
+Assets/Lua/patches/
+  rules_patch_example.lua   the live-ops patch that adds Main.Shop.LimitedOffer
+
+Assets/Scenes/RedDotDemo.unity
+Assets/Tests/EditMode/RedDotViewTests.cs
+Assets/Tests/PlayMode/RedDotDemoSmokeTests.cs
+```
+
+### One landmine worth recording
+
+A handle must implement `IRedDotHandle` **implicitly**, as a public method. Lua reaches a
+handle by member name through xLua reflection, so an explicit interface implementation —
+a private method under a mangled name — compiles, binds, and then silently never fires.
+The interface's own documentation now says so, and the binder tests would have caught it
+again.
+
 ## Test results
 
-**35 / 35 passing**, 35.3 s total (the fuzz case is 1.4 s of it).
+**54 / 54 EditMode**, 39.0 s, and **2 / 2 PlayMode**, 3.4 s. Both run headless.
 
 ```
-Unity 6000.0.59f2, EditMode, NUnit 3.5.0
-total="35" passed="35" failed="0" inconclusive="0" skipped="0"
+Unity 6000.0.59f2, NUnit 3.5.0
+EditMode  total="54" passed="54" failed="0" inconclusive="0" skipped="0"
+PlayMode  total="2"  passed="2"  failed="0" inconclusive="0" skipped="0"
 ```
 
-Every test drives the real Lua modules through the real bridge; the only doubles are
-the fake game managers and the in-memory seen store. Coverage:
+Every test drives the real Lua modules through the real bridge; the only doubles are the
+fake game managers and the in-memory seen store.
+
+### Slice 1 — the engine (35 cases)
 
 | Area | Cases |
 | --- | --- |
@@ -123,6 +241,25 @@ it asserts that each parent equals the aggregate of its children under its polic
 that the set of notified paths is exactly the set of paths whose state differs: nothing
 silent, nothing spurious, nothing notified twice.
 
+### Slice 2 — the view layer (19 cases)
+
+| Area | Cases |
+| --- | --- |
+| Page selection | hidden selects `hidden` and the gear really removes the artwork, count 1 stays a dot, count 0 stays a dot, count > 1 selects `count`, 99 vs 100 vs 41235 → `99`/`99+`/`99+`, and a badge cycling back and forth between all three |
+| Degrading | no `count` field falls back to the dot while still recording the state, no `state` controller falls back to plain visibility, no `redDot` child is inert, a disposed host is not touched |
+| Binding | current state is pushed on bind, a bound badge follows the engine, unbind is idempotent, `UnbindAll` releases one screen and leaves the others |
+| Pooled reuse | **rebinding a recycled component drops the old binding entirely** — the stale view never hears about the old node again — and rebinding to the same path does not stack callbacks |
+| Disposal | a disposed component releases itself on the next update, and can also be swept explicitly |
+| Hot update | a badge bound to a path with no rule lights up when the example patch introduces it |
+
+### Slice 2 — the demo scene (2 PlayMode cases)
+
+The scene loads, the FairyGUI root comes up, the main screen is on it and its Mail button
+is bound. Three mails arrive and the badge does **not** move — events only mark nodes
+dirty — and by the next frame the driver has flushed and it reads `3`. The second case
+applies the example patch and watches the Shop tab light up through
+`Main.Shop.LimitedOffer`.
+
 ### Running the tests
 
 ```
@@ -134,61 +271,55 @@ silent, nothing spurious, nothing notified twice.
   -logFile -
 ```
 
-Or open the project and use **Window → General → Test Runner → EditMode → Run All**.
+Swap `EditMode` for `PlayMode` for the smoke tests. Or open the project and use
+**Window → General → Test Runner**.
 
-> **Note on the recorded run.** Unity refuses batchmode on a project another Editor
+> **Note on the recorded runs.** Unity refuses batchmode on a project another Editor
 > instance has open, and the Editor was open on this project at the time. The recorded
-> run therefore executed against a byte-identical copy of `Assets/`, `Packages/` and
-> `ProjectSettings/` in a scratch directory. Close the Editor and the command above
+> runs therefore executed against a byte-identical copy of `Assets/`, `Packages/` and
+> `ProjectSettings/` in a scratch directory. **Close the Editor** and the command above
 > runs against the repository directly.
 
 ## Next slices
 
-### Slice 2 — FairyGUI views and the demo scene
+### Slice 3 — the authored package, and the polish pass
 
-- `RedDotView`, a `MonoBehaviour`/`GComponent` adapter implementing `IRedDotHandle`:
-  finds the badge child object in a FairyGUI component, sets its visibility and count
-  text, and binds/unbinds on enable/disable with the screen as its owner.
-- A `RedDotDriver` component that calls `Flush()` once per frame in `LateUpdate`.
-- A demo scene with a `UIPanel` and the main-menu layout (bottom tab bar: Mail, Quests,
-  Shop; each tab opening a sub-screen with its own rows).
-- A **UI package spec** in `docs/` for you to author in the FairyGUI Editor: component
-  names, the badge component's structure (`dot` graphic + `count` text + a controller
-  for dot/number/none), and the export settings the runtime expects. The `.fui` binary
-  is authored in the FairyGUI desktop app, so that step needs your hands.
-- Add `FairyGUI` to `RedDot.Runtime.asmdef`'s references (deliberately left out while
-  Slice 1 had no UI, so a FairyGUI problem could not block the core).
+- Drop in the `RedDotDemo` package authored per [PACKAGE_SPEC.md](PACKAGE_SPEC.md) and
+  confirm the demo switches out of fallback mode. Nothing in C# should need to change;
+  if anything does, that is a bug in the spec and worth recording.
+- Commit `FGUIProject/` once it holds the real package.
+- Lay the screens out properly now that there is art to lay out, and give the debug panel
+  a live `debugDump()` rather than an action log.
+- Record the hot-update flow end to end for the GIF: main screen dark → **Apply Lua
+  patch** → Shop tab lights up → Shop screen shows the new row → tap it → clears →
+  **Start limited offer** → back again. That sequence is the single most convincing thing
+  in the repository and deserves to be captured carefully.
+- A "Revert patch" button (`ReloadRulesFromModule`) so the demo can be shown twice in a
+  row without restarting.
 
-### Slice 3 — fake-game demo wiring and the hot-update patch demo
+### Slice 4 — README, GIFs and cleanup
 
-- Wire the fake mail/quest/shop services to on-screen buttons: "receive mail",
-  "read one", "complete a daily", "refresh deals", "roll over the day".
-- A debug overlay rendering `debugDump()` live, so the tree, the seen set and the
-  batching stats are visible while clicking.
-- An **Apply patch** button that registers `Assets/LuaPatch` as a patch root and calls
-  `ReloadRulesFromModule()`. The patch file adds a `Main.Shop.Bundles` badge driven by
-  `ctx:Counter("shop.bundles")` — a new badge, live, with zero C# changes and no
-  domain reload.
-- A **Revert patch** button, so the demo can be shown twice in a row.
-
-### Slice 4 — polish
-
-- README: the pitch, an architecture diagram, the 60-second tour, and GIFs of the demo
-  and of the hot patch landing.
-- Drop the URP template leftovers (`Assets/Readme.asset`, `Assets/TutorialInfo/`) and
-  rename `SampleScene` — deliberately left alone so far to keep the Slice 1 diffs about
-  the red dot system.
-- A GitHub Actions workflow running the EditMode tests (needs a Unity licence secret;
-  the alternative is documenting the local command, which is already done above).
+- README: the pitch, an architecture diagram, the 60-second tour, the GIFs from Slice 3.
+- Drop the URP template leftovers (`Assets/Readme.asset`, `Assets/TutorialInfo/`,
+  `Assets/Scenes/SampleScene.unity`) — deliberately left alone so far to keep the diffs
+  about the red dot system.
+- A GitHub Actions workflow running the EditMode tests (needs a Unity licence secret; the
+  alternative is documenting the local command, which is already done above).
 - A short note on what changes when this ships on a device: where the Lua lives
-  (StreamingAssets or an AssetBundle instead of `Assets/Lua`), and the xLua code
+  (StreamingAssets or an AssetBundle instead of `Assets/Lua`), where the UI package lives
+  (`Resources` or an AssetBundle instead of `Assets/FairyGUI-Packages`), and the xLua code
   generation step for IL2CPP.
 
 ## Anything needing your eyes
 
-- **Nothing is blocking.** Slice 1 is complete and green.
-- The FairyGUI `.fui` UI package for Slice 2 has to be authored in the FairyGUI Editor
-  desktop app. Slice 2 will produce the spec; building the package is your step.
+- **Nothing is blocking.** Slice 2 is complete and green, and the demo is playable now on
+  the fallback UI.
+- **The UI package is yours to author**: [PACKAGE_SPEC.md](PACKAGE_SPEC.md) has the exact
+  component and child names, the badge's controller and gears, the publish settings, and
+  how to verify the demo switched out of fallback mode. `FGUIProject/` is already created
+  and still holds the default `Package1`; it is untracked until it holds the real thing.
+- **Close the Unity Editor** before running the batchmode test command, or it will refuse
+  the project lock.
 - Two assembly definitions were added inside the vendored xLua tree (`XLua`,
   `XLua.Editor`). That is a local modification to a dependency, recorded in
   `Assets/XLua/VENDORED.md`. It is unavoidable: an asmdef assembly cannot reference the
