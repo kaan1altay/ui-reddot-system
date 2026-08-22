@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using FairyGUI;
 using RedDot.Events;
@@ -120,6 +121,12 @@ namespace RedDot.Demo
         private const string MailItemComponent = "MailListItem";
         private const string MailListOwner = "MailScreen.list";
 
+        /// <summary>PlayerPrefs key holding the seen blob. Namespaced so it is easy to find.</summary>
+        public const string SeenPrefsKey = "reddot.demo.seen";
+
+        /// <summary>PlayerPrefs key holding the demo's game time.</summary>
+        public const string ClockPrefsKey = "reddot.demo.clock";
+
         private const string PatchFile = "Lua/patches/rules_patch_example.lua";
         private const string LimitedOfferEvent = "LimitedOfferStarted";
         private const string LimitedOfferCounter = "shop.limitedOffer";
@@ -196,7 +203,12 @@ namespace RedDot.Demo
             FairyGuiEnvironment.EnsureDefaultFont();
 
             _bus = new EventBus();
-            _clock = new FakeClock();
+
+            // Game time is restored, not restarted. A stored seen token says "I saw the
+            // shop on day N"; a clock that began again before day N would make every
+            // previously-seen dot look like new content, which reads as persistence being
+            // broken when it is the clock that is wrong.
+            _clock = new FakeClock(RestoreClockValue(PlayerPrefs.GetString(ClockPrefsKey, null)));
             _mail = new FakeMailService(_bus);
             _quests = new FakeQuestService(_bus);
             _shop = new FakeShopService(_bus, _clock);
@@ -207,9 +219,10 @@ namespace RedDot.Demo
                 Bus = _bus,
                 Context = _context,
 
-                // Deliberately not PlayerPrefs: every run of the demo should start with
-                // nothing seen, so the badges are actually visible.
-                SeenPersistence = new InMemorySeenPersistence(),
+                // Real persistence: what the player dismissed stays dismissed across a
+                // stop and start of Play. See docs/STATUS.md for what does and does not
+                // survive, and DemoMain.ClearSavedState to wipe it.
+                SeenPersistence = new PlayerPrefsSeenPersistence(SeenPrefsKey),
                 Log = message => Debug.Log("[RedDot] " + message),
             });
 
@@ -255,6 +268,14 @@ namespace RedDot.Demo
         public void Teardown()
         {
             _driver?.Detach();
+
+            if (_bridge != null)
+            {
+                // One last tick, so a mark made on the frame the game closed reaches the
+                // save rather than being lost with the frame.
+                _bridge.Flush();
+                SaveClock();
+            }
 
             ClearMailList();
 
@@ -785,6 +806,7 @@ namespace RedDot.Demo
         {
             _clock.AdvanceDays(1);
             _quests.RollOverDay();
+            SaveClock();
             Log("advanced to day " + _clock.Day + "; next reset at " + _bridge.NextDeadline());
         }
 
@@ -836,6 +858,44 @@ namespace RedDot.Demo
         /// way for the player to clear it. That is invisible in code review and obvious
         /// in a play-test, which is the wrong way round -- hence the boot check.
         /// </remarks>
+        /// <summary>
+        /// The saved game time, or the epoch when there is none.
+        /// </summary>
+        /// <remarks>
+        /// Game time never travels backwards. Anything unparseable, or earlier than the
+        /// epoch the demo starts from, is discarded rather than trusted.
+        /// </remarks>
+        public static long RestoreClockValue(string saved)
+        {
+            if (!string.IsNullOrEmpty(saved) &&
+                long.TryParse(saved, NumberStyles.Integer, CultureInfo.InvariantCulture, out var now) &&
+                now > FakeClock.DefaultStart)
+            {
+                return now;
+            }
+
+            return FakeClock.DefaultStart;
+        }
+
+        /// <summary>Wipes everything the demo remembers between sessions.</summary>
+        public static void ClearSavedState()
+        {
+            PlayerPrefs.DeleteKey(SeenPrefsKey);
+            PlayerPrefs.DeleteKey(ClockPrefsKey);
+            PlayerPrefs.Save();
+        }
+
+        private void SaveClock()
+        {
+            if (_clock == null)
+            {
+                return;
+            }
+
+            PlayerPrefs.SetString(ClockPrefsKey, _clock.Now().ToString(CultureInfo.InvariantCulture));
+            PlayerPrefs.Save();
+        }
+
         public static IReadOnlyList<string> FindUnmarkedSeenTypes(IEnumerable<string> seenTrackingTypes)
         {
             var marked = new HashSet<string>(StringComparer.Ordinal);

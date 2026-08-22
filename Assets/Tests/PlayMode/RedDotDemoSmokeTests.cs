@@ -22,6 +22,14 @@ namespace RedDot.Tests
     {
         private const string SceneName = "RedDotDemo";
 
+        // The demo persists to PlayerPrefs now, so each test starts from a clean save and
+        // leaves nothing behind on the machine that ran it.
+        [SetUp]
+        public void ClearSaveBefore() => DemoMain.ClearSavedState();
+
+        [TearDown]
+        public void ClearSaveAfter() => DemoMain.ClearSavedState();
+
         private static IEnumerator LoadDemo()
         {
             yield return SceneManager.LoadSceneAsync(SceneName, LoadSceneMode.Single);
@@ -275,6 +283,48 @@ namespace RedDot.Tests
             Assert.That(view.Visible, Is.False, "and the dot cleared, on the screen");
             Assert.That(demo.Bridge.GetValue("Shop"), Is.False);
             Assert.That(demo.Bridge.Reconcile(), Is.Zero);
+        }
+
+        /// <summary>Stop Play, press Play: what the player dismissed stays dismissed.</summary>
+        [UnityTest]
+        public IEnumerator SeenStateSurvivesAStopAndStartOfPlay()
+        {
+            yield return LoadDemo();
+
+            Assert.That(Demo.Bridge.GetValue("Shop"), Is.True,
+                "nobody has seen today's rotation on a clean save");
+
+            (Demo.GetScreen("Main").GetChild("btnShop") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(Demo.Bridge.GetValue("Shop"), Is.False, "opening the shop marked it seen");
+
+            // Stop Play and press Play again.
+            yield return LoadDemo();
+
+            Assert.That(Demo.Bridge.GetValue("Shop"), Is.False,
+                "the shop was seen last session and it is still the same day");
+        }
+
+        /// <summary>And the clock comes back with it, or the tokens would not line up.</summary>
+        [UnityTest]
+        public IEnumerator AdvancedGameTimeSurvivesTheRestartToo()
+        {
+            yield return LoadDemo();
+
+            Demo.Clock.AdvanceDays(1);
+            yield return null;
+            Assert.That(Demo.Bridge.GetValue("Shop"), Is.True, "a new rotation, unseen");
+
+            (Demo.GetScreen("Main").GetChild("btnShop") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(Demo.Bridge.GetValue("Shop"), Is.False);
+
+            var day = Demo.Clock.Day;
+
+            yield return LoadDemo();
+
+            Assert.That(Demo.Clock.Day, Is.EqualTo(day), "game time did not start again");
+            Assert.That(Demo.Bridge.GetValue("Shop"), Is.False, "so what was seen stays seen");
         }
 
         [UnityTest]

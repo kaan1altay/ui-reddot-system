@@ -6,8 +6,8 @@ C# in between knows nothing about what any badge means.
 
 > **Status: Slice 3 complete.** The core was rebuilt around per-type conditions and a
 > keyed lifecycle (architecture v2 — see [docs/STATUS.md](docs/STATUS.md) for what
-> changed and why). 85 EditMode and 4 PlayMode tests green; the demo runs on the authored
-> UI package.
+> changed and why). 93 EditMode and 10 PlayMode tests green; the demo runs on the
+> authored UI package, and remembers what you dismissed across a stop and start of Play.
 
 ## The idea
 
@@ -95,7 +95,7 @@ Swap `EditMode` for `PlayMode` for the scene smoke tests, or use
 | `Assets/Lua/patches/` | the example live-ops patch |
 | `Assets/Scripts/RedDot/` | the bridge, the FairyGUI view and the binding lifetime |
 | `Assets/Scripts/Demo/` | the demo bootstrap, the code-built UI, fake game managers |
-| `Assets/Tests/` | 85 EditMode cases and 4 PlayMode smoke tests |
+| `Assets/Tests/` | 93 EditMode cases and 10 PlayMode smoke tests |
 | `FGUIProject/` | the FairyGUI Editor source of the UI package |
 | `docs/STATUS.md` | architecture, design decisions, test results, what comes next |
 | `docs/PACKAGE_SPEC.md` | how to author the FairyGUI package the demo binds to |

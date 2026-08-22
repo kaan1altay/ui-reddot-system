@@ -104,6 +104,62 @@ the kind of bug that only shows up on a device.
 
 The blob is written at most once per frame, from the tick.
 
+### What survives a restart
+
+The demo persists to two namespaced PlayerPrefs keys, and
+`DemoMain.ClearSavedState()` wipes both:
+
+| Key | Holds |
+| --- | --- |
+| `reddot.demo.seen` | the seen blob: one versioned JSON entry per marked dot |
+| `reddot.demo.clock` | the demo's game time |
+
+The clock is saved because it has to be. A seen token records *what* the player saw —
+the shop's is `day:19675` — so a clock that started again from the epoch on every run
+would rewind game time and make every date-derived token look like new content. The
+persistence would look broken when the clock was the thing that was wrong. Game time is
+restored on boot and never travels backwards: an unparseable or too-early value is
+discarded rather than trusted.
+
+What does **not** persist is the fake game data. The mail list, the quest board and the
+shop stock are in-memory and start again every session, because they are stand-ins for a
+game, not a game. That makes the two halves of a rule visible separately on a restart:
+
+| Dot | After a stop-Play / start-Play |
+| --- | --- |
+| `Shop` | **stays off** if it was seen and the day has not changed — this is the one to watch |
+| `Mail` | **lights again**, correctly: the seen half is remembered, but two fresh unclaimed mails are seeded, and its rule is "unclaimed mail exists OR unseen" |
+| `Quests` | off, until something is completed — its token is nil on an empty board |
+| `LimitedOffer` | gone, until the patch is applied again |
+
+To watch the shop light up once more, press **Advance time +1 day**: a new day is a new
+token, which is exactly the mechanism the persistence is preserving.
+
+### Every action, and the action that undoes it
+
+A rule that reads real game state can only go off when something changes that state. A
+dot whose condition can become true with nothing in the demo able to make it false again
+lights once and stays lit for the session — a bug that is invisible in review and obvious
+in a play-test. Two of these shipped and were fixed; the table is the sweep that closed
+the class.
+
+| What lights it | Dots affected | What clears it |
+| --- | --- | --- |
+| **Add mail** (`Receive`) | `MailItem\|id`, `Mail` | tap the mail row (`Open`), or **Claim all** (`ClaimAll`) |
+| boot-seeded mail | `MailItem\|1`, `Mail` | as above |
+| **Complete the daily** (`Complete(1,1)`) | `QuestItem\|1\|1`, `Quests` | **Claim the daily**, or tap the **Daily** tab (`Claim(1,1)`) |
+| **Unlock the achievement** (`Complete(2,7)`) | `QuestItem\|2\|7`, `Quests` | tap the **Achievements** tab (`Claim(2,7)`) |
+| **A free deal arrives** (`AddFreeDeal`) | `Shop` | tap the **Daily deals** tab (`Purchase`) |
+| **Start limited offer** | `LimitedOffer` | opening the Shop screen — the type tracks seen state |
+| crossing midnight (**Advance time +1 day**) | `Shop` | opening the Shop screen — the token is the date |
+
+The right-hand column falls into two kinds, and which one a dot uses is the whole of the
+`tracksSeen` decision. A dot that tracks seen state is cleared by *looking*, and the
+screen that shows it marks it — boot validation now reports any `tracksSeen` type no
+screen marks. A dot that reads real state is cleared only by *acting*, and there is no
+automatic check for that: "this condition can become true and nothing can make it false"
+is not decidable in general, which is why the pairs above are written down.
+
 ### Scheduled resets
 
 A rule may expose `resetAt()`. The manager keeps **one** soonest-deadline timer read from
@@ -180,13 +236,13 @@ Assets/Scripts/Demo/
 
 ## Test results
 
-**85 / 85 EditMode**, 56 s, and **4 / 4 PlayMode**, 6.5 s. Both run headless, and the
+**93 / 93 EditMode**, 64 s, and **10 / 10 PlayMode**, 17 s. Both run headless, and the
 PlayMode set runs against the authored UI package.
 
 ```
 Unity 6000.0.59f2, NUnit 3.5.0
-EditMode  total="85" passed="85" failed="0" inconclusive="0" skipped="0"
-PlayMode  total="4"  passed="4"  failed="0" inconclusive="0" skipped="0"
+EditMode  total="93" passed="93" failed="0" inconclusive="0" skipped="0"
+PlayMode  total="10" passed="10" failed="0" inconclusive="0" skipped="0"
 ```
 
 ### The engine (56 cases)

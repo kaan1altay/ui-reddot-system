@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
@@ -605,6 +606,43 @@ namespace RedDot.Tests
         #endregion
 
         #region Scheduled resets
+
+        [Test]
+        public void SavedGameTimeIsRestoredAndNeverTravelsBackwards()
+        {
+            Assert.That(DemoMain.RestoreClockValue(null), Is.EqualTo(FakeClock.DefaultStart));
+            Assert.That(DemoMain.RestoreClockValue(string.Empty), Is.EqualTo(FakeClock.DefaultStart));
+            Assert.That(DemoMain.RestoreClockValue("yesterday"), Is.EqualTo(FakeClock.DefaultStart));
+            Assert.That(DemoMain.RestoreClockValue("1"), Is.EqualTo(FakeClock.DefaultStart),
+                "a stored time before the epoch is discarded rather than trusted");
+
+            var later = FakeClock.DefaultStart + FakeClock.DayLengthSeconds * 3;
+            Assert.That(DemoMain.RestoreClockValue(later.ToString(CultureInfo.InvariantCulture)),
+                Is.EqualTo(later));
+        }
+
+        /// <summary>
+        /// Why the demo persists its clock next to the seen blob: without it, a restart
+        /// would rewind game time and every dot whose token is built from the date would
+        /// look like new content again.
+        /// </summary>
+        [Test]
+        public void AClockThatWentBackwardsWouldReArmEverythingItHadSeen()
+        {
+            _clock.AdvanceDays(2);
+            _bridge.Flush();
+            _bridge.MarkSeen(Shop);
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(Shop), Is.False, "seen, on the day it is now");
+
+            // What a restart with a clock that began again would look like.
+            _clock.SetNow(FakeClock.DefaultStart);
+            _bridge.RaiseEvent("day.rollover");
+            _bridge.Flush();
+
+            Assert.That(_bridge.GetValue(Shop), Is.True);
+            Assert.That(_bridge.Reconcile(), Is.Zero, "the engine is right; the clock was wrong");
+        }
 
         [Test]
         public void TheSoonestDeadlineIsTheOneTheManagerKeeps()
