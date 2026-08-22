@@ -101,6 +101,55 @@ namespace RedDot.Tests
                 "and they were destroyed with the last subscriber, not left to leak");
         }
 
+        /// <summary>Play-test repro: a mail added while the list is on screen.</summary>
+        [UnityTest]
+        public IEnumerator AMailAddedAfterTheListRenderedStillClearsWhenItIsTapped()
+        {
+            yield return LoadDemo();
+
+            var demo = Demo;
+            (demo.GetScreen("Main").GetChild("btnMail") as GComponent)?.onClick.Call();
+            yield return null;
+
+            var seededRows = demo.MailRows.Count;
+            TestContext.WriteLine("rows after opening: " + seededRows);
+
+            // Clear the boot-seeded mail first, so the only thing that can keep the Mail
+            // badge on afterwards is the mail added below.
+            (demo.GetScreen("MailScreen").GetChild("btnClaimAll") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(demo.Bridge.GetValue("Mail"), Is.False, "an empty, seen mailbox says nothing");
+
+            (demo.GetScreen("MailScreen").GetChild("btnAddMail") as GComponent)?.onClick.Call();
+            yield return null;
+
+            Assert.That(demo.MailRows.Count, Is.EqualTo(seededRows + 1), "the new mail got a row");
+
+            var newId = demo.Mail.Mails[demo.Mail.Mails.Count - 1].Id;
+            var row = demo.MailRows[demo.MailRows.Count - 1].asCom;
+            var view = demo.Binder.ViewOf(row);
+
+            Assert.That(view, Is.Not.Null, "the new row is bound");
+            Assert.That(demo.Binder.KeyOf(row), Is.EqualTo("MailItem|" + newId));
+            Assert.That(view.Visible, Is.True, "an unread mail shows a dot");
+
+            row.onClick.Call();
+            yield return null;
+
+            Assert.That(demo.Mail.IsActionable(newId), Is.False, "the tap read the mail");
+            Assert.That(demo.Bridge.Reconcile(), Is.Zero, "no cached value disagrees with a fresh one");
+            Assert.That(view.Visible, Is.False, "and the row badge followed without a rebind");
+
+            // The mailbox is empty and the player is looking straight at it, so the
+            // buttons above the list have to be off too -- without leaving the screen.
+            Assert.That(demo.Mail.ActionableCount(), Is.Zero, "nothing is left unread");
+            Assert.That(demo.Bridge.GetValue("Mail"), Is.False,
+                "the Mail badge cleared as well, with no back-and-re-enter");
+
+            var inbox = demo.GetScreen("MailScreen").GetChild("btnInbox") as GComponent;
+            Assert.That(demo.Binder.ViewOf(inbox).Visible, Is.False);
+        }
+
         [UnityTest]
         public IEnumerator TheExamplePatchAddsATypeTheBuildNeverKnewAbout()
         {

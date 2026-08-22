@@ -270,6 +270,54 @@ namespace RedDot.Tests
             Assert.That(_bridge.Flush(), Is.Zero, "and there was nothing left for the flush to do");
         }
 
+        /// <summary>
+        /// The engine half of the "mail added after the screen opened" play-test bug: a
+        /// dot that came into being after its neighbours must notify its existing
+        /// subscribers on the next flush, with no rebind and no resubscribe.
+        /// </summary>
+        [Test]
+        public void ADotCreatedAfterBootNotifiesItsSubscribersWithoutARebind()
+        {
+            var seeded = _mail.Receive();
+            _bridge.Flush();
+
+            var seededRow = new Recorder();
+            _bridge.Subscribe(seededRow, MailItem, seeded);
+
+            var mailButton = new Recorder();
+            _bridge.Subscribe(mailButton, Mail);
+
+            // "Add mail", with the screen already open, and a row bound for it.
+            var added = _mail.Receive();
+            _bridge.Flush();
+
+            var addedRow = new Recorder();
+            _bridge.Subscribe(addedRow, MailItem, added);
+            Assert.That(addedRow.LastValue, Is.True, "the new mail is unread");
+
+            // The screen is open, so it marks the inbox seen as its content changes.
+            _bridge.MarkSeen(Mail);
+            _mail.Open(seeded);
+            _bridge.Flush();
+
+            addedRow.Calls.Clear();
+            mailButton.Calls.Clear();
+            seededRow.Calls.Clear();
+
+            // Read the mail that arrived last -- no rebind, no resubscribe.
+            _mail.Open(added);
+            _bridge.MarkSeen(Mail);
+            _bridge.Flush();
+
+            Assert.That(addedRow.Calls.Count, Is.EqualTo(1), "the new row heard about it exactly once");
+            Assert.That(addedRow.LastValue, Is.False);
+            Assert.That(mailButton.Calls.Count, Is.EqualTo(1),
+                "and so did the global dot, which is a different rule watching the same event");
+            Assert.That(mailButton.LastValue, Is.False);
+            Assert.That(seededRow.Calls, Is.Empty, "the row that did not change said nothing");
+            Assert.That(_bridge.Reconcile(), Is.Zero);
+        }
+
         [Test]
         public void SubscribingToATypeNoRuleDefinesIsLegalAndReadsFalse()
         {

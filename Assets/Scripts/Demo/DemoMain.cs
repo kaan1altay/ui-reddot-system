@@ -103,11 +103,12 @@ namespace RedDot.Demo
             };
 
         /// <summary>
-        /// What each screen marks seen when it opens. Only the types that track seen
-        /// state respond; the rest ignore it, which is why a screen can mark everything
-        /// it shows without knowing which is which.
+        /// What each screen marks seen -- when it opens, and again after anything it
+        /// shows changes while it is open. Only the types that track seen state respond;
+        /// the rest ignore it, which is why a screen can mark everything it shows without
+        /// knowing which is which.
         /// </summary>
-        private static readonly Dictionary<string, string[]> MarkSeenOnOpen =
+        private static readonly Dictionary<string, string[]> SeenTypesByScreen =
             new Dictionary<string, string[]>
             {
                 [MailScreen] = new[] { TypeMail },
@@ -405,14 +406,14 @@ namespace RedDot.Demo
                 column.Add(DemoUIFactory.CreateActionButton("btnBack", "Back"), 10);
             }
 
-            OnClick(screen, "btnAddMail", () =>
+            OnAction(screen, "btnAddMail", () =>
             {
                 var id = _mail.Receive();
                 Log("mail " + id + " received");
                 PopulateMailList();
             });
 
-            OnClick(screen, "btnClaimAll", () =>
+            OnAction(screen, "btnClaimAll", () =>
             {
                 Log(_mail.ClaimAll() + " mail claimed");
                 PopulateMailList();
@@ -439,19 +440,19 @@ namespace RedDot.Demo
                 column.Add(DemoUIFactory.CreateActionButton("btnBack", "Back"), 10);
             }
 
-            OnClick(screen, "btnCompleteQuest", () =>
+            OnAction(screen, "btnCompleteQuest", () =>
             {
                 _quests.Complete(DailyQuest.Chapter, DailyQuest.Quest);
                 Log("daily quest is claimable");
             });
 
-            OnClick(screen, "btnClaimQuest", () =>
+            OnAction(screen, "btnClaimQuest", () =>
             {
                 _quests.Claim(DailyQuest.Chapter, DailyQuest.Quest);
                 Log("daily quest claimed");
             });
 
-            OnClick(screen, "btnUnlockAchievement", () =>
+            OnAction(screen, "btnUnlockAchievement", () =>
             {
                 _quests.Complete(AchievementQuest.Chapter, AchievementQuest.Quest);
                 Log("achievement is claimable");
@@ -476,7 +477,7 @@ namespace RedDot.Demo
                 column.Add(DemoUIFactory.CreateActionButton("btnBack", "Back"), 10);
             }
 
-            OnClick(screen, "btnNewDeal", () =>
+            OnAction(screen, "btnNewDeal", () =>
             {
                 _shop.AddFreeDeal();
                 Log("free deal added");
@@ -580,15 +581,8 @@ namespace RedDot.Demo
                     after.Total + " (" + after.Keyed + " keyed)");
             }
 
-            // Opening a section is what "the player has looked at this" means. Types that
-            // track real state rather than seen state ignore it.
-            if (MarkSeenOnOpen.TryGetValue(name, out var types))
-            {
-                foreach (var type in types)
-                {
-                    _bridge.MarkSeen(type);
-                }
-            }
+            // Opening a section is what "the player has looked at this" means.
+            MarkCurrentScreenSeen();
         }
 
         #endregion
@@ -637,10 +631,13 @@ namespace RedDot.Demo
                 var mailId = mail.Id;
                 row.onClick.Add(() =>
                 {
-                    if (_mail.Open(mailId))
+                    if (!_mail.Open(mailId))
                     {
-                        Log("opened mail " + mailId);
+                        return;
                     }
+
+                    Log("opened mail " + mailId);
+                    MarkCurrentScreenSeen();
                 });
             }
 
@@ -751,6 +748,41 @@ namespace RedDot.Demo
         #endregion
 
         #region Helpers
+
+        /// <summary>
+        /// Wires a button that changes game state, and re-marks the open screen seen
+        /// afterwards.
+        /// </summary>
+        /// <remarks>
+        /// Marking once, on open, is not enough. A seen token records <em>what</em> the
+        /// player saw, so mail arriving while they are looking at the inbox moves the
+        /// token past the mark and the Mail badge stays lit -- even after every mail has
+        /// been read -- until they leave and come back. A screen that is on screen is
+        /// being looked at, so anything it shows is seen the moment it changes.
+        /// </remarks>
+        private void OnAction(GComponent screen, string childName, Action handler)
+        {
+            OnClick(screen, childName, () =>
+            {
+                handler();
+                MarkCurrentScreenSeen();
+            });
+        }
+
+        /// <summary>Re-marks whatever the open screen displays. Types that track real
+        /// state rather than seen state ignore it.</summary>
+        private void MarkCurrentScreenSeen()
+        {
+            if (CurrentScreen == null || !SeenTypesByScreen.TryGetValue(CurrentScreen, out var types))
+            {
+                return;
+            }
+
+            foreach (var type in types)
+            {
+                _bridge.MarkSeen(type);
+            }
+        }
 
         private static void OnClick(GComponent screen, string childName, Action handler)
         {
