@@ -1,72 +1,77 @@
 # ui-reddot-system
 
 A data-driven, hot-updatable **red dot (badge) notification system** for live-service
-mobile UIs — the rules and the tree live in **Lua (xLua)**, the views are **FairyGUI**,
-and the C# in between knows nothing about any particular badge.
+mobile UIs — every badge is a rule in **Lua (xLua)**, the views are **FairyGUI**, and the
+C# in between knows nothing about what any badge means.
 
-> **Status: Slice 2 complete.** The engine, the FairyGUI view layer, the authored UI
-> package and a playable demo scene are in, with 66 EditMode and 2 PlayMode tests green.
-> See [docs/STATUS.md](docs/STATUS.md).
+> **Status: Slice 3 complete.** The core was rebuilt around per-type conditions and a
+> keyed lifecycle (architecture v2 — see [docs/STATUS.md](docs/STATUS.md) for what
+> changed and why). 85 EditMode and 4 PlayMode tests green; the demo runs on the authored
+> UI package.
 
 ## The idea
 
-Every live-service game grows a red dot system, and it is always the same three
-problems: the rules change more often than the client ships, the tree of badges has to
-aggregate correctly, and naive implementations poll every frame.
+Every live-service game grows a red dot system, and it is always the same problems: the
+rules change more often than the client ships, badges have to be right the first time a
+screen opens, lists create and destroy hundreds of them, and naive implementations
+recompute everything every frame.
 
-This sample answers all three:
+A badge is a rule, and a rule is data:
 
 ```lua
--- Assets/Lua/reddot/rules.lua -- the only file that knows what a badge means
-[types.MAIL_INBOX] = {
-    mode     = types.MODE_PERSISTENT,
-    triggers = { "mail.received", "mail.read", "mail.deleted" },
-    evaluate = function(ctx) return ctx.Mail:UnreadCount() end,
+-- Assets/Lua/reddot/RedDotRules.lua -- the only file that knows what a badge means
+[RedDotType.Mail] = {
+    events     = MAIL_EVENTS,
+    tracksSeen = true,
+    token      = function() return Game.Mail:InboxToken() end,
+    condition  = function(isUnseen) return isUnseen or Game.Mail:ActionableCount() > 0 end,
+},
+
+[RedDotType.MailItem] = {
+    keys      = { "mailId" },
+    events    = MAIL_EVENTS,
+    condition = function(mailId) return Game.Mail:IsActionable(mailId) end,
 },
 ```
 
-- **Data, not code.** A badge is a table: a mode, the events that make it dirty, and a
-  function that reads game state. Adding one is a data change.
-- **Hot-updatable.** `reloadRules` swaps the table at runtime, diffs the event
-  subscriptions and re-evaluates. The demo has a button that does exactly this: it loads
-  a patch file which adds a badge no C# file mentions, and watches the Shop tab light up
-  through it. Bindings survive because they hold path strings, not objects.
-- **Batched, never polled.** Events mark nodes dirty; one flush per frame evaluates each
-  dirty leaf exactly once and notifies only the nodes that actually changed. In the fuzz
-  test, 10 000 events cost 4 545 rule evaluations and zero spurious notifications.
+- **Identity is a type plus keys.** `"Shop"`, `"MailItem|42"`, `"QuestItem|3|17"`. Global
+  dots exist from boot, so a lobby button is correct before its screen has ever been
+  opened. Keyed dots are created when a row binds and destroyed with the last subscriber,
+  so a list of 500 costs 500 dots while it is open and none afterwards.
+- **No aggregation.** Every dot answers its own question. Nothing is defined as the sum of
+  its children, which is what lets a badge be correct on a tree that does not exist yet.
+- **Queue, then flush.** Events mark dots pending and compute nothing; one drain per frame
+  evaluates each pending dot at most once and notifies only what changed. Subscribing is
+  the deliberate exception — it computes synchronously, so a re-entered screen is right on
+  the frame it opens.
+- **Seen state is a token, not a flag.** Marking seen stores what the player saw, so new
+  content re-arms the badge by itself.
+- **Hot-updatable.** `ReloadRules` swaps the table at runtime, diffs the event
+  subscriptions and creates dots for any new global type. The demo has a button that adds
+  a badge no C# file mentions, live.
 
-## The tree
+## Diagnostics that earn their keep
 
-```
-Main                        sum
-├── Mail                    sum
-│   ├── Inbox               Persistent          unread mail
-│   └── System              TransientUntilSeen  operational notice
-├── Quests                  max
-│   ├── Daily               Persistent          completable dailies
-│   └── Achievements        TransientUntilSeen  newly unlocked
-└── Shop                    any
-    └── DailyDeals          TransientUntilSeen  new stock
-```
-
-A parent is visible whenever any child is visible; the policy only decides the number it
-shows — `sum` adds, `max` picks the most urgent, `any` shows a dot with no number.
+`DumpState()` prints the registry, the seen set and the counters. And the reconcile
+checker recomputes everything once a second and logs `MISMATCH` where the cache and a
+fresh evaluation disagree — **fixing nothing on purpose**, because a mismatch means a
+rule is missing an event, and the cache was right about what it was told.
 
 ## The view layer
 
 A badge is a FairyGUI component named `redDot` carrying a controller named `state` with
-the pages `hidden` / `dot` / `count`, and optionally a text field named `count`. The
-adapter picks the page and writes the number; the controller's gears do the rest.
-
-Counts of one stay a plain dot, counts over 99 read `99+`, and every missing piece
-degrades rather than throws — a package with no count field simply never shows a number.
-The full authoring contract is in [docs/PACKAGE_SPEC.md](docs/PACKAGE_SPEC.md).
+the pages `hidden` / `dot` / `count`. The adapter picks the page; the controller's gears
+do the rest, and every missing piece degrades rather than throws.
+`SetRedDotActive(component, false)` is an external kill switch — visible is the rule value
+*and* the screen's say-so — for tutorials and locked tabs, so presentation never leaks
+into the rules. The full authoring contract is in
+[docs/PACKAGE_SPEC.md](docs/PACKAGE_SPEC.md).
 
 ## Running the demo
 
-Open `Assets/Scenes/RedDotDemo.unity` and press Play. Tabs open sections, buttons poke
-the fake mail / quest / shop services, and the debug panel applies the example Lua patch
-live.
+Open `Assets/Scenes/RedDotDemo.unity` and press Play. Tabs open sections, buttons poke the
+fake mail / quest / shop services, and the debug panel applies the example Lua patch,
+advances the clock a day to fire a scheduled reset, and toggles the reconcile checker.
 
 If the authored UI package is ever missing, the demo builds the same screens in code and
 says so in the console. Everything is playable either way.
@@ -86,12 +91,13 @@ Swap `EditMode` for `PlayMode` for the scene smoke tests, or use
 
 | Path | What lives there |
 | --- | --- |
-| `Assets/Lua/reddot/` | the engine: tree, rules, seen store, manager, binder |
+| `Assets/Lua/reddot/` | the engine: types, events, rules, manager, seen store, json |
 | `Assets/Lua/patches/` | the example live-ops patch |
 | `Assets/Scripts/RedDot/` | the bridge, the FairyGUI view and the binding lifetime |
 | `Assets/Scripts/Demo/` | the demo bootstrap, the code-built UI, fake game managers |
-| `Assets/Tests/` | 66 EditMode cases and 2 PlayMode smoke tests |
-| `docs/STATUS.md` | versions, design decisions, test results, what comes next |
+| `Assets/Tests/` | 85 EditMode cases and 4 PlayMode smoke tests |
+| `FGUIProject/` | the FairyGUI Editor source of the UI package |
+| `docs/STATUS.md` | architecture, design decisions, test results, what comes next |
 | `docs/PACKAGE_SPEC.md` | how to author the FairyGUI package the demo binds to |
 
 ## Dependencies

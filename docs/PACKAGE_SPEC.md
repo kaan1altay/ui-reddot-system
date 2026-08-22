@@ -3,14 +3,16 @@
 Authoring instructions for the demo's UI package. The C# binds everything by name, so
 the names below are a contract: match them and the demo works with no code changes.
 
-Until this package exists the demo runs on a code-built fallback UI and says so in the
-console. Nothing here changes any C#.
+The package is authored and in the repository; this file is the contract it satisfies,
+and what to add when the demo grows. Anything missing degrades to a code-built fallback
+with a console warning naming the child, so a half-finished package is always playable.
+Nothing here changes any C#.
 
 - **Package name:** `RedDotDemo`
 - **Design resolution:** 750 × 1334 (portrait)
 - **Export target:** `Assets/FairyGUI-Packages/` (see [Export](#export))
-- **Editor project:** `FGUIProject/` in the repository root — already created; it
-  currently holds the default `Package1`, which you can rename to `RedDotDemo`.
+- **Editor project:** `FGUIProject/` in the repository root, committed alongside the
+  published package.
 
 Visual design is entirely yours. Flat rectangles are fine; the reference implementation
 in `Assets/Scripts/Demo/DemoUIFactory.cs` uses nothing but filled rects and ellipses.
@@ -94,14 +96,16 @@ here so the demo reads sensibly.
 
 ### `Main`
 
-| Child name | Component | Title | Bound to |
+| Child name | Component | Title | Watches |
 | --- | --- | --- | --- |
-| `btnMail` | TabButton | "Mail" | `Main.Mail` |
-| `btnQuests` | TabButton | "Quests" | `Main.Quests` |
-| `btnShop` | TabButton | "Shop" | `Main.Shop` |
+| `btnMail` | TabButton | "Mail" | `Mail` |
+| `btnQuests` | TabButton | "Quests" | `Quests` |
+| `btnShop` | TabButton | "Shop" | `Shop` |
 | `btnApplyPatch` | ActionButton | "Apply Lua patch" | — |
 | `btnStartOffer` | ActionButton | "Start limited offer" | — |
-| `btnDumpTree` | ActionButton | "Dump tree" | — |
+| `btnAdvanceDay` | ActionButton | "Advance time +1 day" | — |
+| `btnReconcile` | ActionButton | "Reconcile: off" | — |
+| `btnDumpTree` | ActionButton | "Dump state" | — |
 | `listDebugText` | list (optional) | — | — |
 | `txtDebug` | text (optional) | — | — |
 
@@ -130,44 +134,83 @@ it, and then to a component named `DebugTextListItem` looked up in the package. 
 those resolve it says so in the console and drops to `txtDebug`.
 
 > Note: the item's text field has UBB and variable parsing available in the editor. The
-> demo's own lines contain no markup, but `debugDump()` output does contain square
+> demo's own lines contain no markup, but `DumpState()` output does contain square
 > brackets — if you ever route that into the list rather than the console, turn UBB off on
 > the item or the brackets will be eaten as markup.
 
+
 ### `MailScreen`
 
-| Child name | Component | Title | Bound to |
+| Child name | Component | Title | Watches |
 | --- | --- | --- | --- |
-| `btnInbox` | TabButton | "Inbox" | `Main.Mail.Inbox` |
-| `btnSystem` | TabButton | "System" | `Main.Mail.System` |
+| `btnInbox` | TabButton | "Inbox" | `Mail` |
+| `btnSystem` | TabButton | "System" | `MailItem|1` |
+| `listMail` | list | — | one `MailItem|<id>` per row |
 | `btnAddMail` | ActionButton | "Add mail" | — |
-| `btnReadOne` | ActionButton | "Read one" | — |
 | `btnClaimAll` | ActionButton | "Claim all" | — |
 | `btnBack` | ActionButton | "Back" | — |
 
+`btnInbox` watches the **same global dot** the main screen's Mail button does — one dot,
+two subscribers — which is worth seeing on screen because nothing about the model makes
+that a special case.
+
+`listMail` is the keyed-lifecycle demo and needs authoring; see below. Until it exists
+the screen still works, and the demo says so in the console.
+
+> The old `btnReadOne` is gone: mail is opened by tapping a row now. Leaving it in the
+> package is harmless — the demo only wires the children it finds.
+
+#### `listMail` — the mail list
+
+A **non-virtual** `GList`, `overflow: scroll`, roughly 690 × 460, whose default item is
+`MailListItem`. The demo fills it on entering the screen and empties it on leaving.
+Nothing else about it is load-bearing: no controller, no selection mode, no item
+renderer.
+
+#### `MailListItem` — one mail row
+
+**Must be exported.** Roughly 690 × 72, with two children:
+
+| Name | Type | Notes |
+| --- | --- | --- |
+| `title` | text | The subject line. The demo writes `#12  Season rewards` into it. |
+| `redDot` | instance of `RedDotBadge` | **Name must be exactly `redDot`.** Pin it to the right-hand edge. |
+
+Leave the extension as **None** and make the component itself touchable — the demo adds
+the click handler that opens the mail. The badge is set `touchable = false` in code, so
+it can never swallow the tap meant for the row underneath it.
+
+Each row binds `MailItem|<mailId>` when it is created and releases it when the list is
+cleared, which is what destroys the dot. Watch the demo's log line on the way in and out
+of the screen: the live dot count goes up by one per row and comes back down again.
+
 ### `QuestsScreen`
 
-| Child name | Component | Title | Bound to |
+| Child name | Component | Title | Watches |
 | --- | --- | --- | --- |
-| `btnDaily` | TabButton | "Daily" | `Main.Quests.Daily` |
-| `btnAchievements` | TabButton | "Achievements" | `Main.Quests.Achievements` |
-| `btnCompleteQuest` | ActionButton | "Complete a quest" | — |
-| `btnClaimQuest` | ActionButton | "Claim a quest" | — |
-| `btnUnlockAchievement` | ActionButton | "Unlock an achievement" | — |
+| `btnDaily` | TabButton | "Daily" | `QuestItem|1|1` |
+| `btnAchievements` | TabButton | "Achievements" | `QuestItem|2|7` |
+| `btnCompleteQuest` | ActionButton | "Complete the daily" | — |
+| `btnClaimQuest` | ActionButton | "Claim the daily" | — |
+| `btnUnlockAchievement` | ActionButton | "Unlock the achievement" | — |
 | `btnBack` | ActionButton | "Back" | — |
+
+These two are the **two-key** case: a `QuestItem` is identified by a chapter and a quest,
+in that order, and the registry key is `QuestItem|2|7`.
 
 ### `ShopScreen`
 
-| Child name | Component | Title | Bound to |
+| Child name | Component | Title | Watches |
 | --- | --- | --- | --- |
-| `btnDailyDeals` | TabButton | "Daily deals" | `Main.Shop.DailyDeals` |
-| `btnLimitedOffer` | TabButton | "Limited offer" | `Main.Shop.LimitedOffer` |
-| `btnNewDeal` | ActionButton | "New deal arrives" | — |
+| `btnDailyDeals` | TabButton | "Daily deals" | `Shop` |
+| `btnLimitedOffer` | TabButton | "Limited offer" | `LimitedOffer` |
+| `btnNewDeal` | ActionButton | "A free deal arrives" | — |
 | `btnBack` | ActionButton | "Back" | — |
 
-> `Main.Shop.LimitedOffer` has no rule until the example Lua patch is applied. Binding a
-> path that does not exist yet is legal and reads as hidden, so this badge sits dark
-> until the patch lands and then lights up. That is the point of it.
+> `LimitedOffer` is a **type** no rule defines until the example Lua patch is applied.
+> Binding a type that does not exist yet is legal and reads as off, so this badge sits
+> dark until the patch lands and then lights up. That is the point of it.
+
 
 ---
 
@@ -231,10 +274,9 @@ instead (or load the package from an AssetBundle — the loader is three lines).
    Mail tab on the main screen shows `3`, and the root aggregates it. Click **Apply Lua
    patch** on the main screen and the Shop tab lights up.
 
-## Committing the FairyGUI project
+## The FairyGUI project
 
-`FGUIProject/` is the editable source of the package and belongs in the repository — it
-is a few hundred kilobytes of XML and it lets anyone opening the repo see how the UI was
-built. Its own `.gitignore` already excludes the editor's `.objs` scratch folder. It is
-currently untracked because it still holds the default empty `Package1`; commit it once
-the real package is in there.
+`FGUIProject/` is the editable source of the package and is committed — a few hundred
+kilobytes of XML that lets anyone opening the repo see how the UI was built. Its own
+`.gitignore` excludes the editor's `.objs` scratch folder. Re-publish after any change,
+or Unity keeps loading the last export.

@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-08-22 — end of Slice 2.
+Last updated: 2026-08-22 — end of Slice 3 (architecture v2).
 
 ## Environment
 
@@ -26,243 +26,213 @@ was left out and why.
 | `RedDot.Runtime` | `Assets/Scripts` — bridge, view layer, event bus, context, demo |
 | `RedDot.Tests.EditMode` | `Assets/Tests/EditMode` |
 | `RedDot.Tests.PlayMode` | `Assets/Tests/PlayMode` |
+## Architecture v2 — what changed, and why
 
-## What Slice 1 covers
+Slice 3 replaced the core. Slices 1 and 2 built a **path tree with parent
+aggregation**: `Main.Mail.Inbox` was a node, `Main.Mail` was the sum of its children,
+and a badge bubbled upward. Play-testing killed it.
 
-The complete engine, with no UI attached yet.
+### What was wrong with aggregation
 
-### The contract
+- **A parent could not be right until its children existed.** The Mail button on the
+  lobby is a *lobby* concern, but under aggregation its value was a function of nodes
+  that only came into being when the mail screen was built. On a cold start the lobby was
+  correct only because every node was created at boot — which is the same as saying the
+  tree could never be sparse.
+- **Re-entering a screen showed empty badges.** Nodes were rebuilt on the way in, and
+  nothing had a value until the next event bubbled through. This was the bug that
+  actually got noticed.
+- **The tree was a second model of the game.** `Main.Mail.Inbox` had to mirror both the
+  UI hierarchy and the data hierarchy, and the two do not agree for long. A badge that
+  belongs to two screens had to be either duplicated or awkwardly re-parented.
+- **Aggregation policies were a decision nobody wanted.** `sum` / `max` / `any` existed
+  because a parent had to say *something* about children it did not understand. In
+  practice a designer wants "the Shop button lights up when there is a free deal", which
+  is a sentence about the shop, not an arithmetic over its sub-screens.
 
-- **Node** — a path-addressed point in a tree (`Main.Mail.Inbox`). Parents aggregate
-  children. A parent is visible whenever any child is visible; the per-node **policy**
-  only decides the number it shows:
-  - `sum` — add the visible children's counts (`Main`, `Main.Mail`)
-  - `max` — show the largest visible child count (`Main.Quests`, so two unrelated lists
-    do not add up to a meaningless total)
-  - `any` — a dot with no number (`Main.Shop`)
-- **Rule** — leaf nodes only, declared in Lua as data: `mode`, `triggers`, `evaluate(ctx)`.
-  - `Persistent` — visible while the condition holds; marking it seen does nothing
-    (`Main.Mail.Inbox`, `Main.Quests.Daily`)
-  - `TransientUntilSeen` — visible until the player looks; a later trigger makes it
-    unseen again (`Main.Mail.System`, `Main.Quests.Achievements`, `Main.Shop.DailyDeals`)
-- **Dirty batching** — events mark leaves dirty and evaluate nothing. One `flush()` per
-  frame evaluates each dirty leaf exactly once, bubbles aggregates deepest-first and
-  stops on any branch where nothing moved, then notifies only the nodes that changed.
-  A flush with an empty dirty set does no work at all: there is no polling anywhere.
-- **Hot-update seam** — `manager:reloadRules(newRules)` diffs the event subscriptions
-  (events that survive are never churned; events that lost their last rule are really
-  unsubscribed on the C# bus) and re-evaluates the whole tree, reporting only genuine
-  differences. Bindings survive because they hold path strings, not node objects.
+### What replaced it
 
-### Design decisions worth calling out
+**Identity is a type plus ordered key values**, and the registry key is those joined with
+`|`:
 
-- **Events are signals, not payloads.** A rule always re-reads the authoritative value
-  from `ctx`. That is what makes it correct to collapse a hundred `mail.received` events
-  in one frame into a single evaluation, instead of applying a hundred deltas that can
-  drift out of sync with the real inbox.
-- **Nothing but strings, booleans and numbers crosses the Lua/C# boundary.** No Lua
-  table is marshalled into C# and no C# delegate is handed to Lua, so the bridge needs
-  no generated glue and the whole seam fits in one file.
-- **`RedDotContext` is the honest limit of hot updates.** A patch can invent any badge
-  from the accessors it lists, with zero C# change — but it cannot invent a new
-  accessor. `ctx:Counter(key)` is the deliberate escape hatch for values live-ops sends
-  after the client shipped.
-- **The loader searches an ordered list of roots.** Roots registered as patches go in
-  front, so a downloaded `reddot/rules.lua` shadows the shipped one. The demo's "Apply
-  Lua patch" button is the other half of the same seam.
-- **C# knows nothing about any specific badge.** Search the C# sources for "mail" and
-  the only hits are the fake game managers and the test fixture.
+```
+"Shop"            a global dot: no keys, one instance
+"MailItem|42"     one dot per mail
+"QuestItem|3|17"  two keys, in the order the rule declares them
+```
 
-### Files
+**Every dot answers its own question.** There is no aggregation anywhere. The Mail button
+has a rule; so does each mail row; they are unrelated, and the button is correct before a
+single row exists. That is the trade: a little duplication of intent between a parent
+question and its children, in exchange for every dot being independently correct,
+independently testable, and cheap to reason about.
+
+**Two lifecycles carry the cost model.**
+
+| | Global (`keys = nil`) | Keyed (`keys = {...}`) |
+| --- | --- | --- |
+| Created | at boot, by `CreateGlobalRedDots` | on the first `Subscribe` |
+| Destroyed | never | with the last unsubscribe |
+| Cost | a handful, for the session | one per row, while the screen is open |
+
+A mail list of 500 rows costs 500 dots while it is open and none afterwards.
+`ClearSubscriptions()` releases everything at a state-change boundary, so a screen torn
+down without unbinding cannot keep dots alive for the rest of the session.
+
+**Events queue; they never compute.** An event marks the live dots of the affected types
+pending. One drain per frame computes each pending dot at most once, compares with the
+cached value, and notifies only on a change. Fifty events in a frame cost one evaluation
+per dot.
+
+**Subscribe is the deliberate exception.** It computes synchronously and pushes the value
+before returning, which is what makes a re-entered screen correct on the frame it opens
+rather than after the next event. There is a test named after that repro.
+
+### Seen state is a token, not a boolean
+
+`MarkSeen` stores the token the rule reports *now*. A dot is unseen exactly when its
+stored token differs from the current one, so new content re-arms a badge with no extra
+bookkeeping in the rule — and a nil token means "the data has not loaded", which keeps
+the dot off rather than guessing.
+
+Persistence is one PlayerPrefs key holding JSON with a `SAVE_VERSION`. An older or
+corrupt blob is discarded with a warning rather than migrated: seen state is cosmetic,
+and a wrong guess shows the player badges they already dismissed. Entries are stored as
+an **array of `[key, token]` pairs** rather than an object — a set keyed by id would come
+back from JSON with string keys, and a set whose key type changed on the round trip is
+the kind of bug that only shows up on a device.
+
+The blob is written at most once per frame, from the tick.
+
+### Scheduled resets
+
+A rule may expose `resetAt()`. The manager keeps **one** soonest-deadline timer read from
+the game clock; when it passes, the due types are queued and the deadlines are
+recomputed. They are also recomputed after any flush that did work, because fresh data
+can move a boundary. Nothing polls: an idle frame is two number comparisons and a dirty
+flag.
+
+### Boot validation
+
+`ValidateRules` rejects the four ways a rule is silently wrong — silently, because every
+one of them shows up as "the badge is just always off" or "the badge is sometimes stale",
+weeks later:
+
+| Problem | Level |
+| --- | --- |
+| `token` without `tracksSeen` — the token is never read | error |
+| neither `condition` nor `tracksSeen` — it can only ever be false | error |
+| an event name that is not in `RedDotEvent` or declared by the patch | error |
+| neither `events` nor `resetAt` — it never refreshes by itself | warning |
+
+The walk over each rule's `events` reads every numeric key rather than using `#`, so a
+nil hole in the middle of a list cannot swallow the entries after it.
+
+### The reconcile checker
+
+`SetReconcileEnabled(true)` recomputes every live dot once a second and logs `MISMATCH`
+for any whose cached value disagrees. **It fixes nothing, on purpose.** A mismatch is not
+a glitch to paper over — the cache is right about what it was told, and what it was told
+was incomplete. It means a rule is missing an event, and the only correct fix is in the
+rule.
+
+### What survived
+
+The FairyGUI badge contract (`redDot` / `state` / `count`), the authored UI package, the
+screens, the vendored dependencies, the loader with its patch-shadowing roots, the event
+bus, and the hot-update seam. `ReloadRules` still diffs subscriptions; it now also
+creates dots for any global type the patch introduces.
+
+The badge's `count` page is intact but currently unused: the engine reports a boolean, so
+`RedDotView` always selects `dot`. `RedDotView.Apply(bool, int)` still supports counts, so
+a rule that grows a number later needs no change in the view.
+
+## Files
 
 ```
 Assets/Lua/reddot/
-  types.lua        node paths, aggregation policies, rule modes, declared tree
-  tree.lua         path strings -> parent/child tree; validation
-  rules.lua        the rule table: pure data, the only file that knows what a badge means
-  seen_store.lua   TransientUntilSeen flags + the persistence backend contract
-  manager.lua      the engine: dirty batching, aggregation, seen logic, reloadRules
-  binder.lua       bind(path, handle) / unbind / unbindAll(owner)
-
-Assets/Scripts/
-  Events/EventBus.cs        string-keyed pub/sub, bridged into Lua
-  RedDot/RedDotBridge.cs    boots xLua; RaiseEvent / Flush / MarkSeen / ReloadRules
-  RedDot/LuaScriptLoader.cs ordered search roots, patch folders shadow base files
-  RedDot/RedDotContext.cs   the game-data surface rules may read
-  RedDot/SeenPersistence.cs ISeenPersistence + in-memory and PlayerPrefs stores
-  Demo/FakeGameServices.cs  fake mail / quest / shop managers
-
-Assets/Tests/EditMode/
-  RedDotCoreTests.cs        35 NUnit cases
-```
-
-## What Slice 2 covers
-
-The view layer, a playable demo, and the authoring spec for the UI package.
-
-### The badge contract
-
-`RedDotView` drives one FairyGUI badge purely by convention, so a designer can add a
-badge to any component without a programmer touching anything. Inside a host component
-it looks for a child named `redDot`, and inside that a controller named `state` with the
-pages `hidden` / `dot` / `count`, plus an optional text field named `count`.
-
-| Engine state | Page | Why |
-| --- | --- | --- |
-| hidden | `hidden` | — |
-| visible, count 0 | `dot` | what an `any` policy parent reports: deliberately countless |
-| visible, count 1 | `dot` | a lone "1" beside an icon is decoration, not information |
-| visible, count 2–99 | `count` | the number says something |
-| visible, count > 99 | `count`, text `99+` | so the badge never has to be wider than two digits |
-
-Every piece is optional and every missing piece degrades instead of throwing: no
-controller falls back to plain visibility, no `count` field falls back to the dot, no
-`redDot` child at all makes the view inert. A half-authored UI package is a normal state
-during authoring and it must not take the screen down.
-
-The full authoring instructions are in [PACKAGE_SPEC.md](PACKAGE_SPEC.md).
-
-### Binding lifetime
-
-`RedDotBinder` is what makes the raw `RedDotBridge.Bind` seam safe to use from UI code,
-where components are disposed by screen teardown and recycled by list pools in an order
-nobody controls. It guarantees two things:
-
-- **One binding per component.** Binding a component that is already bound releases the
-  previous binding first, so a pooled row rebound to a different node can never still
-  light up for the node it used to be. This is the regression the suite exists for.
-- **Disposed components release themselves.** A component that leaves the stage while
-  disposed unbinds immediately; and any update aimed at a disposed component unbinds it
-  on the spot. The second path is the one that matters, because a component disposed
-  before it ever reached the stage never raises the first.
-
-`UnbindAll(owner)` releases a whole screen in one call, through the Lua binder's own
-owner index.
-
-### The demo
-
-`Assets/Scenes/RedDotDemo.unity` — a fake game with four screens. What C# knows about
-the badge tree is one table of `(screen, child, path)` rows in `DemoMain`; adding a badge
-is a row, and adding a *rule* needs no C# at all.
-
-- **Main** — Mail / Quests / Shop tabs, each with a badge on the aggregate node, plus the
-  debug panel.
-- **Mail / Quests / Shop** — leaf badges and buttons that poke the fake services. Opening
-  a leaf section marks it seen. Reaching the Mail tab deliberately does not: that is not
-  the same as having read the notice inside it.
-- **Apply Lua patch** — loads `Assets/Lua/patches/rules_patch_example.lua` through
-  `ReloadRules`. It introduces `Main.Shop.LimitedOffer`, a node no C# file mentions, and
-  the Shop tab lights up through it. **Start limited offer** raises
-  `LimitedOfferStarted`, the event the patch subscribed to as part of the reload's
-  subscription diff — before the patch, nobody listened to it and it cost a dictionary
-  miss. **Dump tree** logs `debugDump()`.
-
-`RedDotDriver` is the entire per-frame cost of the system: one `Flush()` in `LateUpdate`,
-which returns immediately when nothing is dirty. It runs late so badges settle once, at
-the end of the frame that caused them, instead of flickering through intermediate states.
-
-### Graceful missing-package mode
-
-The authored `RedDotDemo` package is now in the repository, so this is no longer the
-default path -- but it stays load-bearing. When the package is absent `DemoMain` builds
-the same screens in code and says so:
-
-```
-[RedDotDemo] UI package 'RedDotDemo' not found -- using fallback UI.
-Author the package per docs/PACKAGE_SPEC.md and export it to Assets/FairyGUI-Packages/
-```
-
-`DemoUIFactory` builds real `GComponent`s with a real `state` controller and real display
-gears, so the fallback behaves exactly like an authored package rather than approximating
-one. That makes it both the placeholder UI and the EditMode tests' fixtures: the view
-tests drive a controller that really hides real children. A package that is only partly
-authored also degrades per screen — a missing component falls back to its code-built
-version and logs which one.
-
-### Files added
-
-```
-Assets/Scripts/RedDot/
-  RedDotView.cs             badge adapter: page selection, "99+" cap, graceful degrading
-  RedDotBinder.cs           component-scoped binding with pooled-reuse and disposal safety
-
-Assets/Scripts/Demo/
-  DemoMain.cs               boot, screen flow, the (screen, child, path) table, debug panel
-  DemoUIFactory.cs          the code-built screens: fallback UI and test fixtures
-  RedDotDriver.cs           one Flush per frame, in LateUpdate
-  DemoLogPanel.cs           the on-screen log: scrolling list, text field, or console
-  FairyGuiEnvironment.cs    default font setup (Unity 6 no longer serves Arial.ttf)
-
-Assets/Editor/
-  DemoSceneBuilder.cs       generates the demo scene; RedDot > Rebuild demo scene
+  RedDotType.lua      the type-name dictionary
+  RedDotEvent.lua     the known event names; validation checks against this
+  RedDotRules.lua     the rule table: keys, condition, tracksSeen, token, resetAt, events
+  manager.lua         the engine: registry, lifecycles, queue/drain, resets, validation,
+                      reconcile, DumpState
+  seen_store.lua      token-per-dot seen state, versioned JSON, one write per frame
+  json.lua            a minimal encoder/decoder, sized for the save blob
 
 Assets/Lua/patches/
-  rules_patch_example.lua   the live-ops patch that adds Main.Shop.LimitedOffer
+  rules_patch_example.lua   adds the LimitedOffer type, rule and event
 
-Assets/Scenes/RedDotDemo.unity
-Assets/Tests/EditMode/RedDotViewTests.cs
-Assets/Tests/PlayMode/RedDotDemoSmokeTests.cs
+Assets/Scripts/RedDot/
+  RedDotBridge.cs     boots xLua; RaiseEvent / Flush / Subscribe / MarkSeen / ReloadRules
+  RedDotBinder.cs     Bind(component, type, ...keys), SetRedDotActive, disposal safety
+  RedDotView.cs       the badge adapter
+  RedDotContext.cs    the Game surface rules may read, plus the generic counter
+  LuaScriptLoader.cs  ordered search roots; patch folders shadow base files
+  SeenPersistence.cs  ISeenPersistence + in-memory and PlayerPrefs stores
+
+Assets/Scripts/Demo/
+  DemoMain.cs         boot, screen flow, the (screen, child, type, keys) table
+  DemoUIFactory.cs    the code-built screens: fallback UI and test fixtures
+  DemoLogPanel.cs     the on-screen log: scrolling list, text field, or console
+  FakeGameServices.cs fake mail / quest / shop managers and the fake clock
+  RedDotDriver.cs     one Tick per frame, in LateUpdate
 ```
-
-### One landmine worth recording
-
-A handle must implement `IRedDotHandle` **implicitly**, as a public method. Lua reaches a
-handle by member name through xLua reflection, so an explicit interface implementation —
-a private method under a mangled name — compiles, binds, and then silently never fires.
-The interface's own documentation now says so, and the binder tests would have caught it
-again.
 
 ## Test results
 
-**66 / 66 EditMode**, 39.2 s, and **2 / 2 PlayMode**, 3.5 s. Both run headless, and the
-PlayMode pair now runs against the authored UI package.
+**85 / 85 EditMode**, 56 s, and **4 / 4 PlayMode**, 6.5 s. Both run headless, and the
+PlayMode set runs against the authored UI package.
 
 ```
 Unity 6000.0.59f2, NUnit 3.5.0
-EditMode  total="66" passed="66" failed="0" inconclusive="0" skipped="0"
-PlayMode  total="2"  passed="2"  failed="0" inconclusive="0" skipped="0"
+EditMode  total="85" passed="85" failed="0" inconclusive="0" skipped="0"
+PlayMode  total="4"  passed="4"  failed="0" inconclusive="0" skipped="0"
 ```
 
-Every test drives the real Lua modules through the real bridge; the only doubles are the
-fake game managers and the in-memory seen store.
-
-### Slice 1 — the engine (35 cases)
+### The engine (56 cases)
 
 | Area | Cases |
 | --- | --- |
-| Tree and aggregation | start state, declared shape, `sum`, `max`, `any`, cross-branch root, parent goes dark only when every child does |
-| Rule modes | persistent ignores mark-seen, persistent clears with its condition, transient hides once seen, trigger re-arms a seen transient, mark-seen on a parent clears the subtree, unknown path is a no-op, seen state survives a restart through the C# persistence callback |
-| Dirty batching | 10 events → 1 evaluation, idle flush does nothing at all, unchanged nodes do not notify, bubbling stops where nothing changed, unsubscribed events never reach Lua, the bridge subscribes to exactly the named triggers |
-| Bindings | immediate push on bind, follow-up changes, unbind is idempotent, `unbindAll` by owner, several handles per path |
-| Hot update | patch adds a brand-new badge with no C# change, a binding made *before* the reload picks up the node it introduces, a retired rule really unsubscribes on the C# bus, bindings survive, a reload reports only badges that moved, module reload goes through the loader, a rule on an aggregate is rejected without half-applying, a throwing rule is contained |
-| Diagnostics | `debugDump` renders the tree, the seen set and the stats |
-| Fuzz | 10 000 random events, seen marks and reloads in both directions |
+| Registry keys | type alone, one key, two keys in order, and integers that must not pick up a decimal point |
+| Lifecycles | globals exist from boot with nobody watching, a global is correct before its screen was ever opened, keyed dots are created on first subscribe and destroyed with the last, globals survive their last subscriber, `ClearSubscriptions` keeps globals and drops the rest, double-subscribe is counted honestly |
+| Immediate compute | `Subscribe` pushes before returning, **the re-enter-screen repro**, and binding a type no rule defines reads false and says so once |
+| Queue and drain | events compute nothing, 50 events cost one evaluation per dot, unchanged dots do not notify, an idle flush does no work at all, unsubscribed events never reach Lua, the bus carries exactly the named events, a destroyed keyed dot costs nothing |
+| Seen and tokens | a tracked dot starts on and clears when marked, new content moves the token and it returns, a nil token keeps it off, types that track real state ignore `MarkSeen`, marking with no content stores nothing |
+| Persistence | round trip through one blob, an older version is discarded, a corrupt blob is discarded, three marks cost one write |
+| Scheduled resets | the soonest deadline is the one kept, crossing it requeues and reschedules with no event at all, a deadline that has not arrived costs nothing |
+| Safety | a throwing rule reads false while the rest keeps working, and complains once rather than every frame |
+| Validation | the four error cases, a patch declaring its own events, the shipped rules validating clean, and a nil hole not swallowing a later typo |
+| Reconcile | flags a rule missing an event, is quiet when the rules are complete, and sweeps on its own timer |
+| Hot update | the patch adds a type the build never knew about, a binding made before the reload picks it up, a retired rule unsubscribes on the C# bus, a reload reports only what moved |
+| Diagnostics | `DumpState` renders the registry, the seen set and the stats |
+| Fuzz | 10 000 random events, marks, subscribes, unsubscribes and reloads |
 
-The fuzz run: 10 000 events → 986 flushes, 21 hot reloads, 17 202 dispatches, but only
-**4 545 rule evaluations** — batching in one number. After every flush and every reload
-it asserts that each parent equals the aggregate of its children under its policy, and
-that the set of notified paths is exactly the set of paths whose state differs: nothing
-silent, nothing spurious, nothing notified twice.
+The fuzz run: 10 000 iterations → 6 122 events reaching Lua, 1 667 flushes, 15 hot
+reloads, 6 711 rule evaluations for 7 579 queue entries. After **every** flush and
+**every** reload it asserts two things: `Reconcile()` returns zero — every cached value
+equals a fresh recomputation — and the set of notified keys is exactly the set whose
+value differs, with nothing notified twice.
 
-### Slice 2 — the view layer and the demo log (31 cases)
+### The view layer (29 cases)
 
 | Area | Cases |
 | --- | --- |
-| Page selection | hidden selects `hidden` and the gear really removes the artwork, count 1 stays a dot, count 0 stays a dot, count > 1 selects `count`, 99 vs 100 vs 41235 → `99`/`99+`/`99+`, and a badge cycling back and forth between all three |
-| Degrading | no `count` field falls back to the dot while still recording the state, no `state` controller falls back to plain visibility, no `redDot` child is inert, a disposed host is not touched |
-| Binding | current state is pushed on bind, a bound badge follows the engine, unbind is idempotent, `UnbindAll` releases one screen and leaves the others |
-| Pooled reuse | **rebinding a recycled component drops the old binding entirely** — the stale view never hears about the old node again — and rebinding to the same path does not stack callbacks |
-| Disposal | a disposed component releases itself on the next update, and can also be swept explicitly |
-| Hot update | a badge bound to a path with no rule lights up when the example patch introduces it |
-| Debug log | the scrolling list wins over the text field which wins over the console, placeholder items are cleared on boot, one item per line, the oldest drop past the cap (custom and the default 100), a list whose item cannot be built degrades to the text field, and the code-built fallback UI still logs |
+| Page selection | hidden really removes the artwork through the gear, a boolean value selects `dot`, count 1 stays a dot, counts above one select `count`, 99 / 100 / 41235 → `99` / `99+` / `99+`, a badge cycling all three, and the badge is not touchable |
+| Degrading | no `count` field falls back to the dot, no `state` controller falls back to visibility, no `redDot` child is inert, a disposed host is not touched |
+| Binding | the current value is pushed on bind, a bound badge follows the engine, unbind is idempotent, `UnbindAll` releases one screen and its keyed dots |
+| Pooled reuse | **rebinding a recycled row drops the old binding and destroys the dot it was holding open**, and rebinding to the same dot does not stack subscriptions |
+| Disposal | a disposed component releases itself on the next update, and can be swept explicitly |
+| Kill switch | an inactive badge stays hidden while the rule says yes, reactivating shows the *current* answer rather than the old one, an inactive binding still tracks underneath, and setting it on something unbound is a no-op |
+| Hot update | a badge bound to a type with no rule lights up when the patch introduces it |
 
-### Slice 2 — the demo scene (2 PlayMode cases)
+### The demo scene (4 PlayMode cases)
 
-The scene loads, the FairyGUI root comes up, the main screen is on it and its Mail button
-is bound. Three mails arrive and the badge does **not** move — events only mark nodes
-dirty — and by the next frame the driver has flushed and it reads `3`. The second case
-applies the example patch and watches the Shop tab light up through
-`Main.Shop.LimitedOffer`.
+The scene loads, the FairyGUI root comes up, and the Mail button is bound to the global
+`Mail` dot. Mail is claimed and the badge does **not** move — events only queue — and by
+the next frame the driver has ticked and it is off. Opening the mail screen creates keyed
+dots and leaving destroys them, back to exactly the count from before. The example patch
+adds `LimitedOffer` and the offer button lights it. Advancing the clock a day fires the
+scheduled reset with no event raised at all.
 
 ### Running the tests
 
@@ -275,56 +245,51 @@ applies the example patch and watches the Shop tab light up through
   -logFile -
 ```
 
-Swap `EditMode` for `PlayMode` for the smoke tests. Or open the project and use
+Swap `EditMode` for `PlayMode` for the scene tests. Or use
 **Window → General → Test Runner**.
 
 > **Note on the recorded runs.** Unity refuses batchmode on a project another Editor
-> instance has open, and the Editor was open on this project at the time. The recorded
-> runs therefore executed against a byte-identical copy of `Assets/`, `Packages/` and
-> `ProjectSettings/` in a scratch directory. **Close the Editor** and the command above
-> runs against the repository directly.
+> instance has open. The recorded runs executed against a byte-identical copy of
+> `Assets/`, `Packages/` and `ProjectSettings/` in a scratch directory. **Close the
+> Editor** and the command above runs against the repository directly.
 
 ## Next slices
 
-### Slice 3 — the authored package, and the polish pass
+### Slice 4 — the mail list, and the polish pass
 
-- Drop in the `RedDotDemo` package authored per [PACKAGE_SPEC.md](PACKAGE_SPEC.md) and
-  confirm the demo switches out of fallback mode. Nothing in C# should need to change;
-  if anything does, that is a bug in the spec and worth recording.
-- Commit `FGUIProject/` once it holds the real package.
-- Lay the screens out properly now that there is art to lay out, and give the debug panel
-  a live `debugDump()` rather than an action log.
-- Record the hot-update flow end to end for the GIF: main screen dark → **Apply Lua
-  patch** → Shop tab lights up → Shop screen shows the new row → tap it → clears →
-  **Start limited offer** → back again. That sequence is the single most convincing thing
-  in the repository and deserves to be captured carefully.
-- A "Revert patch" button (`ReloadRulesFromModule`) so the demo can be shown twice in a
-  row without restarting.
+- Author `listMail` and `MailListItem` per [PACKAGE_SPEC.md](PACKAGE_SPEC.md), plus the
+  two new debug buttons (`btnAdvanceDay`, `btnReconcile`). Until then the mail screen
+  runs without its list and says so; everything else already binds.
+- Lay the screens out properly now there is art to lay out.
+- Record the two GIFs that carry the whole repository: the **hot patch** (main screen
+  dark → Apply Lua patch → Shop lights up → open Shop → tap → clears → Start limited
+  offer → back again), and the **keyed lifecycle** (dot count in the debug log going up
+  on entering Mail and back down on leaving).
+- A "Revert patch" button so the demo can be shown twice without restarting.
 
-### Slice 4 — README, GIFs and cleanup
+### Slice 5 — README, GIFs and cleanup
 
-- README: the pitch, an architecture diagram, the 60-second tour, the GIFs from Slice 3.
+- README: the pitch, an architecture diagram, the 60-second tour, the GIFs.
 - Drop the URP template leftovers (`Assets/Readme.asset`, `Assets/TutorialInfo/`,
-  `Assets/Scenes/SampleScene.unity`) — deliberately left alone so far to keep the diffs
-  about the red dot system.
-- A GitHub Actions workflow running the EditMode tests (needs a Unity licence secret; the
-  alternative is documenting the local command, which is already done above).
-- A short note on what changes when this ships on a device: where the Lua lives
-  (StreamingAssets or an AssetBundle instead of `Assets/Lua`), where the UI package lives
-  (`Resources` or an AssetBundle instead of `Assets/FairyGUI-Packages`), and the xLua code
-  generation step for IL2CPP.
+  `Assets/Scenes/SampleScene.unity`).
+- A GitHub Actions workflow running the EditMode tests (needs a Unity licence secret).
+- A note on shipping: where the Lua lives (StreamingAssets or an AssetBundle instead of
+  `Assets/Lua`), where the UI package lives, and the xLua code generation step for
+  IL2CPP.
 
 ## Anything needing your eyes
 
-- **Nothing is blocking.** Slice 2 is complete and green, and the demo is playable now on
-  the fallback UI.
-- **The UI package is yours to author**: [PACKAGE_SPEC.md](PACKAGE_SPEC.md) has the exact
-  component and child names, the badge's controller and gears, the publish settings, and
-  how to verify the demo switched out of fallback mode. `FGUIProject/` is already created
-  and still holds the default `Package1`; it is untracked until it holds the real thing.
-- **Close the Unity Editor** before running the batchmode test command, or it will refuse
-  the project lock.
+- **Nothing is blocking.** The core rebuild is complete and green, and the demo runs on
+  your authored package.
+- **`listMail` and `MailListItem` are yours to author** —
+  [PACKAGE_SPEC.md](PACKAGE_SPEC.md) has the exact structure. The PlayMode run currently
+  reports `mail rows: 0, keyed dots: 1`, which is the mail screen working without its
+  list; once the list exists that count grows with the rows.
+- `btnAdvanceDay` and `btnReconcile` are new on the Main screen. The demo skips buttons
+  it cannot find, so the package works as-is without them.
+- `btnReadOne` on the mail screen is no longer wired — mail is opened by tapping a row.
+  Leaving it in the package is harmless.
+- **Close the Unity Editor** before running the batchmode test command.
 - Two assembly definitions were added inside the vendored xLua tree (`XLua`,
-  `XLua.Editor`). That is a local modification to a dependency, recorded in
-  `Assets/XLua/VENDORED.md`. It is unavoidable: an asmdef assembly cannot reference the
-  default `Assembly-CSharp`, where an asmdef-less xLua would land.
+  `XLua.Editor`), recorded in `Assets/XLua/VENDORED.md`. Unavoidable: an asmdef assembly
+  cannot reference the default `Assembly-CSharp`.
