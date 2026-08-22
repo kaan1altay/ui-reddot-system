@@ -969,6 +969,31 @@ return rules
             Assert.That(_bridge.GetValue(QuestItem, 2, 7), Is.False);
         }
 
+        /// <summary>
+        /// The shop dot has the same shape as the quest one: a real-state half that only
+        /// an action can clear, ORed with a seen half that looking clears.
+        /// </summary>
+        [Test]
+        public void AFreeDealKeepsTheShopDotOnUntilSomethingTakesIt()
+        {
+            _bridge.MarkSeen(Shop);
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(Shop), Is.False);
+
+            _shop.AddFreeDeal();
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(Shop), Is.True);
+
+            _bridge.MarkSeen(Shop);
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(Shop), Is.True,
+                "looking at a free deal does not take it");
+
+            _shop.Purchase();
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(Shop), Is.False);
+        }
+
         #endregion
 
         #region Diagnostics

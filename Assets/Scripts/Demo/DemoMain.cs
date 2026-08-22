@@ -499,7 +499,21 @@ namespace RedDot.Demo
             OnAction(screen, "btnNewDeal", () =>
             {
                 _shop.AddFreeDeal();
-                Log("free deal added");
+                Log("free deal added, " + _shop.FreeDeals + " waiting");
+            });
+
+            // Tapping the deals tab takes one, the way tapping a mail row reads it and
+            // tapping a quest claims it. A dot whose condition is "there is a free deal
+            // waiting" only goes off when something takes the deal.
+            OnAction(screen, "btnDailyDeals", () =>
+            {
+                if (!_shop.HasFreeDeal())
+                {
+                    return;
+                }
+
+                _shop.Purchase();
+                Log("deal claimed, " + _shop.FreeDeals + " left");
             });
 
             Register(ShopScreen, screen);

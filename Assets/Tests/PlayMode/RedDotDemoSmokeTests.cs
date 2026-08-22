@@ -247,6 +247,36 @@ namespace RedDot.Tests
             Assert.That(demo.Bridge.GetValue("Quests"), Is.False, "now there is nothing left to claim");
         }
 
+        /// <summary>Play-test repro: the free deal that never cleared.</summary>
+        [UnityTest]
+        public IEnumerator AFreeDealCanBeTakenAgainFromTheShopScreen()
+        {
+            yield return LoadDemo();
+
+            var demo = Demo;
+            (demo.GetScreen("Main").GetChild("btnShop") as GComponent)?.onClick.Call();
+            yield return null;
+
+            var shop = demo.GetScreen("ShopScreen");
+            var deals = shop.GetChild("btnDailyDeals") as GComponent;
+            var view = demo.Binder.ViewOf(deals);
+            Assert.That(view, Is.Not.Null);
+            Assert.That(view.Visible, Is.False, "the shop was just opened, so it is seen and empty");
+
+            (shop.GetChild("btnNewDeal") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(demo.Shop.FreeDeals, Is.EqualTo(1));
+            Assert.That(view.Visible, Is.True, "a free deal is waiting");
+
+            deals.onClick.Call();
+            yield return null;
+
+            Assert.That(demo.Shop.FreeDeals, Is.Zero, "the tap took the deal");
+            Assert.That(view.Visible, Is.False, "and the dot cleared, on the screen");
+            Assert.That(demo.Bridge.GetValue("Shop"), Is.False);
+            Assert.That(demo.Bridge.Reconcile(), Is.Zero);
+        }
+
         [UnityTest]
         public IEnumerator AdvancingADayFiresTheScheduledResetWithNoEventAtAll()
         {
