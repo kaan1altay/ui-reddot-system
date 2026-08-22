@@ -9,6 +9,7 @@
     <component id="rms65" name="MailScreen.xml" path="/" exported="true"/>
     <component id="rms66" name="QuestsScreen.xml" path="/" exported="true"/>
     <component id="rms67" name="ShopScreen.xml" path="/" exported="true"/>
+    <component id="rog18" name="MailListItem.xml" path="/" exported="true"/>
   </resources>
   <publish name=""/>
 </packageDescription>

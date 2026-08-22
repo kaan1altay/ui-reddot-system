@@ -1,29 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <component size="750,1334">
   <displayList>
-    <component id="n0_rms6" name="btnInbox" src="rms61" fileName="TabButton.xml" xy="514,197">
+    <component id="n0_rms6" name="btnInbox" src="rms61" fileName="TabButton.xml" xy="120,31">
       <relation target="" sidePair="right-right,top-top"/>
       <property target="title" propertyId="0" value="Inbox"/>
     </component>
-    <component id="n1_rms6" name="btnSystem" src="rms61" fileName="TabButton.xml" xy="514,363">
+    <component id="n1_rms6" name="btnSystem" src="rms61" fileName="TabButton.xml" xy="380,31">
       <relation target="" sidePair="right-right,top-top"/>
       <property target="title" propertyId="0" value="System"/>
     </component>
-    <component id="n10_rms6" name="btnAddMail" src="rms62" fileName="ActionButton.xml" xy="37,958">
+    <component id="n10_rms6" name="btnAddMail" src="rms62" fileName="ActionButton.xml" xy="30,1050">
       <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
       <Button title="Add mail"/>
     </component>
-    <component id="n5_rms6" name="btnReadOne" src="rms62" fileName="ActionButton.xml" xy="29,1051">
-      <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
-      <Button title="Read one"/>
-    </component>
-    <component id="n6_rms6" name="btnClaimAll" src="rms62" fileName="ActionButton.xml" xy="29,1144" size="690,78">
+    <component id="n6_rms6" name="btnClaimAll" src="rms62" fileName="ActionButton.xml" xy="30,1143" size="690,78">
       <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
       <Button title="Claim all"/>
     </component>
-    <component id="n7_rms6" name="btnBack" src="rms62" fileName="ActionButton.xml" xy="33,1237" size="690,78">
+    <component id="n7_rms6" name="btnBack" src="rms62" fileName="ActionButton.xml" xy="30,1236" size="690,78">
       <relation target="" sidePair="width-width,center-center,bottom-bottom"/>
       <Button title="Back"/>
     </component>
+    <list id="n11_rog1" name="listMail" xy="375,632" pivot="0.5,0.5" anchor="true" size="750,825" overflow="scroll" margin="15,0,0,0" defaultItem="ui://vzwhkot3rog18" autoItemSize="false" align="center">
+      <relation target="" sidePair="width-width,height-height"/>
+      <item/>
+    </list>
   </displayList>
 </component>
