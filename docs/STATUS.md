@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-08-23 — Slice 3, after the play-test fix pass.
+**Complete.** Last updated 2026-08-23.
 
 ## Environment
 
@@ -280,8 +280,9 @@ Assets/Scripts/Demo/
 
 ## Test results
 
-**95 / 95 EditMode**, 72 s, and **12 / 12 PlayMode**, 22 s. Both run headless, and the
-PlayMode set runs against the authored UI package.
+**95 / 95 EditMode**, 64 s, and **12 / 12 PlayMode**, 17 s. Both run headless, and the
+PlayMode set runs against the authored UI package. The recorded run is against a clean
+project with no Library, after the template cleanup.
 
 ```
 Unity 6000.0.59f2, NUnit 3.5.0
@@ -353,43 +354,53 @@ Swap `EditMode` for `PlayMode` for the scene tests. Or use
 > `Assets/`, `Packages/` and `ProjectSettings/` in a scratch directory. **Close the
 > Editor** and the command above runs against the repository directly.
 
-## Next slices
+## What the play-tests found
 
-### Slice 4 — the mail list, and the polish pass
+Five findings came out of play-testing, and between them they shaped the architecture
+more than any amount of up-front design did. The first killed the original model: badges
+were blank when a screen was re-entered, because a parent's value was a function of
+children that were rebuilt on the way in — which is the same defect as a lobby button
+that cannot be right until the screen behind it has been opened, and it is why v2 has no
+aggregation and why `Subscribe` computes synchronously. The second was a mail added while
+the inbox was open that would not clear: the screen marked the inbox seen once, when it
+opened, so a mail arriving afterwards moved the token past the mark and the badge stuck —
+a screen that is on screen is being looked at, and now re-marks after every action. The
+third and fourth were the same bug twice, an achievement and then a free deal that lit and
+could never be cleared, because nothing in the demo claimed either; that pair is what
+turned a one-off fix into the action-pair table above and into the boot check for
+`tracksSeen` types no screen marks. The fifth was the limited offer failing to light the
+lobby Shop button — a behaviour v1 got free from aggregation, lost when aggregation was
+deleted, and missed by a test that had been weakened to `Is.Not.Null` in the same commit
+that broke it. Deleting a mechanism means finding everything it was quietly providing, and
+a weakened assertion is worse than a deleted one, because it still looks like coverage.
 
-- Author `listMail` and `MailListItem` per [PACKAGE_SPEC.md](PACKAGE_SPEC.md), plus the
-  two new debug buttons (`btnAdvanceDay`, `btnReconcile`). Until then the mail screen
-  runs without its list and says so; everything else already binds.
-- Lay the screens out properly now there is art to lay out.
-- Record the two GIFs that carry the whole repository: the **hot patch** (main screen
-  dark → Apply Lua patch → Shop lights up → open Shop → tap → clears → Start limited
-  offer → back again), and the **keyed lifecycle** (dot count in the debug log going up
-  on entering Mail and back down on leaving).
-- A "Revert patch" button so the demo can be shown twice without restarting.
+A sixth thing surfaced while verifying persistence: the demo had never used PlayerPrefs at
+all. It does now, and the game clock is saved with the seen blob, because a token that
+encodes the date is meaningless if time restarts.
 
-### Slice 5 — README, GIFs and cleanup
+## What is deliberately not here
 
-- README: the pitch, an architecture diagram, the 60-second tour, the GIFs.
-- Drop the URP template leftovers (`Assets/Readme.asset`, `Assets/TutorialInfo/`,
-  `Assets/Scenes/SampleScene.unity`).
-- A GitHub Actions workflow running the EditMode tests (needs a Unity licence secret).
-- A note on shipping: where the Lua lives (StreamingAssets or an AssetBundle instead of
-  `Assets/Lua`), where the UI package lives, and the xLua code generation step for
-  IL2CPP.
+The project is complete as a demonstration of the red dot system, and these were scoped
+out rather than forgotten:
 
-## Anything needing your eyes
+- **GIFs and an architecture diagram in the README.** The two worth recording are the hot
+  patch landing and the keyed dot count rising and falling around the mail screen.
+- **A CI workflow.** The EditMode suite runs headless in one command, but a GitHub Actions
+  job needs a Unity licence secret, which a public sample repository should not carry.
+- **Shipping concerns.** On a device the Lua would come from StreamingAssets or an
+  AssetBundle rather than `Assets/Lua`, the UI package likewise, and IL2CPP would need
+  xLua's code generation step. None of that changes the engine; all of it changes where
+  bytes come from.
+- **A "revert patch" button**, so the hot-update demo can be shown twice without
+  restarting. `ReloadRulesFromModule` already does it; only the button is missing.
 
-- **Nothing is blocking.** The core rebuild is complete and green, and the demo runs on
-  your authored package.
-- **`listMail` and `MailListItem` are yours to author** —
-  [PACKAGE_SPEC.md](PACKAGE_SPEC.md) has the exact structure. The PlayMode run currently
-  reports `mail rows: 0, keyed dots: 1`, which is the mail screen working without its
-  list; once the list exists that count grows with the rows.
-- `btnAdvanceDay` and `btnReconcile` are new on the Main screen. The demo skips buttons
-  it cannot find, so the package works as-is without them.
-- `btnReadOne` on the mail screen is no longer wired — mail is opened by tapping a row.
-  Leaving it in the package is harmless.
-- **Close the Unity Editor** before running the batchmode test command.
+## Notes
+
+- **Close the Unity Editor** before running the batchmode test command, or it will refuse
+  the project lock. The recorded runs executed against a byte-identical copy of `Assets/`,
+  `Packages/` and `ProjectSettings/` in a scratch directory.
 - Two assembly definitions were added inside the vendored xLua tree (`XLua`,
   `XLua.Editor`), recorded in `Assets/XLua/VENDORED.md`. Unavoidable: an asmdef assembly
   cannot reference the default `Assembly-CSharp`.
+- `DemoMain.ClearSavedState()` wipes the demo's two PlayerPrefs keys if you want the
+  badges back from a clean slate.

@@ -4,10 +4,10 @@ A data-driven, hot-updatable **red dot (badge) notification system** for live-se
 mobile UIs — every badge is a rule in **Lua (xLua)**, the views are **FairyGUI**, and the
 C# in between knows nothing about what any badge means.
 
-> **Status: Slice 3 complete.** The core was rebuilt around per-type conditions and a
-> keyed lifecycle (architecture v2 — see [docs/STATUS.md](docs/STATUS.md) for what
-> changed and why). 95 EditMode and 12 PlayMode tests green; the demo runs on the
-> authored UI package, and remembers what you dismissed across a stop and start of Play.
+> **Complete.** The engine, the FairyGUI view layer, the authored UI package and a
+> playable demo are in, with 95 EditMode and 12 PlayMode tests green. See
+> [docs/STATUS.md](docs/STATUS.md) for the architecture, the design decisions and what
+> five rounds of play-testing changed.
 
 ## The idea
 
