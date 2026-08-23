@@ -9,6 +9,26 @@ C# in between knows nothing about what any badge means.
 > [docs/STATUS.md](docs/STATUS.md) for the architecture, the design decisions and what
 > five rounds of play-testing changed.
 
+## See it working
+
+**A live-ops patch adding a badge the build never shipped.** Apply the patch, start an
+offer, and the lobby Shop button lights -- through a rule rewritten at runtime, with no
+C# rebuilt and no scene reloaded. Opening the shop counts as seeing it.
+
+![Applying a Lua patch at runtime](docs/media/hot_update_patch.gif)
+
+**The keyed lifecycle.** One dot per mail row, created when the row binds and destroyed
+with the last subscriber. Watch the live dot count in the debug log rise on entering the
+mailbox and fall on leaving it.
+
+![Keyed dots created and destroyed with a list](docs/media/keyed_lifecycle.gif)
+
+**Seen state and the scheduled reset.** A badge clears when the player looks, and comes
+back by itself when the content behind it changes -- including at a day boundary that no
+event announces.
+
+![Seen state and a scheduled daily reset](docs/media/seen_and_reset.gif)
+
 ## The idea
 
 Every live-service game grows a red dot system, and it is always the same problems: the

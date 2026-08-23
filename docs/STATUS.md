@@ -383,8 +383,8 @@ encodes the date is meaningless if time restarts.
 The project is complete as a demonstration of the red dot system, and these were scoped
 out rather than forgotten:
 
-- **GIFs and an architecture diagram in the README.** The two worth recording are the hot
-  patch landing and the keyed dot count rising and falling around the mail screen.
+- **An architecture diagram in the README.** The three GIFs are in `docs/media/`; a
+  drawn diagram of the event -> queue -> drain -> notify path would still help.
 - **A CI workflow.** The EditMode suite runs headless in one command, but a GitHub Actions
   job needs a Unity licence secret, which a public sample repository should not carry.
 - **Shipping concerns.** On a device the Lua would come from StreamingAssets or an
