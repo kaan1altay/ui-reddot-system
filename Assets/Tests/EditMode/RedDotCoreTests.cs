@@ -912,6 +912,71 @@ return rules
             Assert.That(_bridge.SubscriberCount(LimitedOffer), Is.EqualTo(1));
         }
 
+        /// <summary>
+        /// The regression: the patch has to make the lobby Shop button react to the offer,
+        /// and in a model with no aggregation that means rewriting the Shop rule.
+        /// </summary>
+        [Test]
+        public void ThePatchMakesTheShopDotReactToTheOffer()
+        {
+            _bridge.MarkSeen(Shop);
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(Shop), Is.False, "a quiet, seen shop");
+
+            _bridge.ReloadRules(PatchSource());
+            Assert.That(_bridge.GetValue(Shop), Is.False,
+                "installing the patch on a quiet shop changes nothing the player can see");
+            Assert.That(_bridge.SubscribedEvents(), Contains.Item("LimitedOfferStarted"));
+
+            _context.SetCounter("shop.limitedOffer", 1);
+            _bridge.RaiseEvent("LimitedOfferStarted");
+            _bridge.Flush();
+
+            Assert.That(_bridge.GetValue(Shop), Is.True, "the lobby button lights for the offer");
+            Assert.That(_bridge.GetValue(LimitedOffer), Is.True);
+
+            // Opening the shop is what clears both.
+            _bridge.MarkSeen(Shop);
+            _bridge.MarkSeen(LimitedOffer);
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(Shop), Is.False);
+            Assert.That(_bridge.GetValue(LimitedOffer), Is.False);
+
+            // And the next offer lights it again.
+            _context.SetCounter("shop.limitedOffer", 2);
+            _bridge.RaiseEvent("LimitedOfferStarted");
+            _bridge.Flush();
+            Assert.That(_bridge.GetValue(Shop), Is.True);
+            Assert.That(_bridge.GetValue(LimitedOffer), Is.True);
+            Assert.That(_bridge.Reconcile(), Is.Zero);
+        }
+
+        /// <summary>
+        /// Seen state written before the patch existed must not suppress the offer. The
+        /// stored token cannot accidentally match one that carries an offer suffix.
+        /// </summary>
+        [Test]
+        public void SeenStateFromAnEarlierSessionDoesNotSuppressTheOffer()
+        {
+            _bridge.MarkSeen(Shop);
+            _bridge.Flush();
+            var carriedOver = _seen.Blob;
+            Assert.That(carriedOver, Does.Contain("Shop"));
+
+            // A new session restoring that blob, which then applies the patch.
+            _bridge.Dispose();
+            _bridge = CreateBridge();
+            Assert.That(_bridge.GetValue(Shop), Is.False, "still seen, same day");
+
+            _bridge.ReloadRules(PatchSource());
+            _context.SetCounter("shop.limitedOffer", 1);
+            _bridge.RaiseEvent("LimitedOfferStarted");
+            _bridge.Flush();
+
+            Assert.That(_bridge.GetValue(Shop), Is.True,
+                "yesterday's seen mark cannot cover an offer that did not exist then");
+        }
+
         [Test]
         public void AReloadThatRetiresARuleUnsubscribesItsEvents()
         {

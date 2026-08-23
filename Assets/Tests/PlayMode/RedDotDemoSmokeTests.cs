@@ -188,6 +188,94 @@ namespace RedDot.Tests
 
             Assert.That(demo.Bridge.GetValue("LimitedOffer"), Is.True);
             Assert.That(shopView, Is.Not.Null);
+            Assert.That(demo.Bridge.GetValue("Shop"), Is.True,
+                "and the lobby Shop button reacts to it, which is what the patch rewrites");
+        }
+
+        /// <summary>
+        /// Play-test repro: apply the patch, start an offer, and the lobby Shop button has
+        /// to light and stay lit until the shop is opened.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator AnOfferLightsTheShopButtonUntilTheShopIsOpened()
+        {
+            yield return LoadDemo();
+
+            var demo = Demo;
+            var main = demo.GetScreen("Main");
+            var shopButton = main.GetChild("btnShop") as GComponent;
+            var shopView = demo.Binder.ViewOf(shopButton);
+
+            // Clear the shop first, so the offer is the only thing that can light it.
+            (shopButton)?.onClick.Call();
+            yield return null;
+            (demo.GetScreen("ShopScreen").GetChild("btnBack") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(demo.Binder.ViewOf(main.GetChild("btnShop") as GComponent).Visible, Is.False);
+
+            (main.GetChild("btnApplyPatch") as GComponent)?.onClick.Call();
+            yield return null;
+            shopView = demo.Binder.ViewOf(main.GetChild("btnShop") as GComponent);
+            Assert.That(shopView.Visible, Is.False,
+                "the patch alone must not light anything the player has already seen");
+
+            (main.GetChild("btnStartOffer") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(shopView.Visible, Is.True, "the offer lit the lobby button");
+
+            // It stays lit while the player is elsewhere.
+            yield return null;
+            yield return null;
+            Assert.That(shopView.Visible, Is.True);
+
+            // Opening the shop counts as seeing the offer.
+            (main.GetChild("btnShop") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(demo.Bridge.GetValue("Shop"), Is.False);
+            Assert.That(demo.Bridge.GetValue("LimitedOffer"), Is.False);
+
+            (demo.GetScreen("ShopScreen").GetChild("btnBack") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(demo.Binder.ViewOf(main.GetChild("btnShop") as GComponent).Visible, Is.False);
+
+            // And the next offer lights it again.
+            (main.GetChild("btnStartOffer") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(demo.Binder.ViewOf(main.GetChild("btnShop") as GComponent).Visible, Is.True);
+            Assert.That(demo.Bridge.Reconcile(), Is.Zero);
+        }
+
+        /// <summary>
+        /// The same flow in a session that restored saved state, and re-applying the patch
+        /// in that new session.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator AnOfferStillLightsTheShopButtonInARestoredSession()
+        {
+            // Session one: see the shop, so the save carries a Shop token.
+            yield return LoadDemo();
+            (Demo.GetScreen("Main").GetChild("btnShop") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(Demo.Bridge.GetValue("Shop"), Is.False);
+
+            // Session two: the patch has to be applied again, because rules are not saved.
+            yield return LoadDemo();
+
+            var demo = Demo;
+            var main = demo.GetScreen("Main");
+            Assert.That(demo.Bridge.GetValue("Shop"), Is.False,
+                "restored from the save: seen, same day");
+
+            (main.GetChild("btnApplyPatch") as GComponent)?.onClick.Call();
+            yield return null;
+            Assert.That(demo.Bridge.GetValue("Shop"), Is.False, "re-applying it is still quiet");
+
+            (main.GetChild("btnStartOffer") as GComponent)?.onClick.Call();
+            yield return null;
+
+            Assert.That(demo.Bridge.GetValue("Shop"), Is.True,
+                "a seen mark from the previous session cannot cover an offer that is new");
+            Assert.That(demo.Binder.ViewOf(main.GetChild("btnShop") as GComponent).Visible, Is.True);
         }
 
         /// <summary>Play-test repro: the achievement dot that never cleared.</summary>

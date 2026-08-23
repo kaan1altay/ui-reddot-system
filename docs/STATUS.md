@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-08-22 — end of Slice 3 (architecture v2).
+Last updated: 2026-08-23 — Slice 3, after the play-test fix pass.
 
 ## Environment
 
@@ -26,6 +26,7 @@ was left out and why.
 | `RedDot.Runtime` | `Assets/Scripts` — bridge, view layer, event bus, context, demo |
 | `RedDot.Tests.EditMode` | `Assets/Tests/EditMode` |
 | `RedDot.Tests.PlayMode` | `Assets/Tests/PlayMode` |
+
 ## Architecture v2 — what changed, and why
 
 Slice 3 replaced the core. Slices 1 and 2 built a **path tree with parent
@@ -150,7 +151,7 @@ the class.
 | **Complete the daily** (`Complete(1,1)`) | `QuestItem\|1\|1`, `Quests` | **Claim the daily**, or tap the **Daily** tab (`Claim(1,1)`) |
 | **Unlock the achievement** (`Complete(2,7)`) | `QuestItem\|2\|7`, `Quests` | tap the **Achievements** tab (`Claim(2,7)`) |
 | **A free deal arrives** (`AddFreeDeal`) | `Shop` | tap the **Daily deals** tab (`Purchase`) |
-| **Start limited offer** | `LimitedOffer` | opening the Shop screen — the type tracks seen state |
+| **Start limited offer** | `LimitedOffer`, `Shop` | opening the Shop screen — both types track seen state |
 | crossing midnight (**Advance time +1 day**) | `Shop` | opening the Shop screen — the token is the date |
 
 The right-hand column falls into two kinds, and which one a dot uses is the whole of the
@@ -203,6 +204,49 @@ The badge's `count` page is intact but currently unused: the engine reports a bo
 `RedDotView` always selects `dot`. `RedDotView.Apply(bool, int)` still supports counts, so
 a rule that grows a number later needs no change in the view.
 
+
+### What the example patch does, and why it rewrites a rule
+
+The patch adds the `LimitedOffer` type — and rewrites the shipped `Shop` rule.
+
+The second half is the interesting one. Under v1's parent/child model the lobby Shop
+button lit up for a new child by aggregation: for free, and without anyone deciding it
+should. v2 has no aggregation, so if the Shop button is to react to the offer, the Shop
+*rule* has to say so. A patch owns the whole rule table, not just its new entries, so it
+can. Adding a badge is easy in any model; changing what a badge that already shipped
+means, on a Tuesday afternoon, is the thing worth being able to do.
+
+Concretely the patch gives `Shop` the new event and folds the offer into its content
+stamp:
+
+```lua
+token = function()
+    local day = Game.Shop:ResetToken()
+    local offer = Game:Counter("shop.limitedOffer")
+    if offer <= 0 then return day end
+    return day .. "|offer:" .. offer
+end
+```
+
+With no offer running the stamp is byte-for-byte the shipped one, so **installing the
+patch on a shop the player has already seen changes nothing visible**. A patch that lights
+a badge merely by being installed is a patch nobody trusts.
+
+The behaviour that follows, and that the tests pin down:
+
+| Step | Shop button on Main |
+| --- | --- |
+| apply the patch on a seen shop | stays off |
+| **Start limited offer** | **lights**, and stays lit while the player is elsewhere |
+| open the Shop screen | clears — opening counts as seeing the offer, and the Limited Offer badge clears with it |
+| **Start limited offer** again | lights again: a new offer is a new stamp |
+| in a session restored from a save | identical — a seen mark written before the offer existed cannot match a stamp that carries it |
+
+Rules are not saved, so a new session starts on the shipped rule table and the patch has
+to be applied again. After a restart that followed an offer, the Shop button is lit once:
+the stored stamp says the player last saw a shop that had an offer in it, and this one
+does not. Opening the shop clears it. That is the same "seen state persists, fake data
+does not" property as the mailbox, and it is why the demo prints its dot counts.
 ## Files
 
 ```
@@ -236,13 +280,13 @@ Assets/Scripts/Demo/
 
 ## Test results
 
-**93 / 93 EditMode**, 64 s, and **10 / 10 PlayMode**, 17 s. Both run headless, and the
+**95 / 95 EditMode**, 72 s, and **12 / 12 PlayMode**, 22 s. Both run headless, and the
 PlayMode set runs against the authored UI package.
 
 ```
 Unity 6000.0.59f2, NUnit 3.5.0
-EditMode  total="93" passed="93" failed="0" inconclusive="0" skipped="0"
-PlayMode  total="10" passed="10" failed="0" inconclusive="0" skipped="0"
+EditMode  total="95" passed="95" failed="0" inconclusive="0" skipped="0"
+PlayMode  total="12" passed="12" failed="0" inconclusive="0" skipped="0"
 ```
 
 ### The engine (56 cases)
