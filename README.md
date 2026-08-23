@@ -1,133 +1,103 @@
 # ui-reddot-system
 
-A data-driven, hot-updatable **red dot (badge) notification system** for live-service
-mobile UIs — every badge is a rule in **Lua (xLua)**, the views are **FairyGUI**, and the
-C# in between knows nothing about what any badge means.
+**A production-shaped "red dot" notification system for live-service mobile UIs — Unity, FairyGUI, and Lua (xLua), with the rules hot-updatable at runtime.**
 
-> **Complete.** The engine, the FairyGUI view layer, the authored UI package and a
-> playable demo are in, with 95 EditMode and 12 PlayMode tests green. See
-> [docs/STATUS.md](docs/STATUS.md) for the architecture, the design decisions and what
-> five rounds of play-testing changed.
+A clean-room portfolio sample by [Kaan Altay](https://github.com/kaan1altay). I work professionally on the client of a live-service mobile ARPG; this repo is a from-scratch implementation of the badge-notification architecture I'd ship today — written entirely for this repository.
 
-## See it working
+![Applying a Lua patch at runtime: a badge type that did not exist a second ago lights up the Shop button — zero C# changes](docs/media/hot_update_patch.gif)
 
-**A live-ops patch adding a badge the build never shipped.** Apply the patch, start an
-offer, and the lobby Shop button lights -- through a rule rewritten at runtime, with no
-C# rebuilt and no scene reloaded. Opening the shop counts as seeing it.
+*The core demo: "Start limited offer" does nothing — the rule doesn't exist. Apply a Lua patch (nothing lights: installing a patch is invisible by design), press it again — the Shop badge lights through a rule that shipped one second ago. No C# was rebuilt.*
 
-![Applying a Lua patch at runtime](docs/media/hot_update_patch.gif)
+---
 
-**The keyed lifecycle.** One dot per mail row, created when the row binds and destroyed
-with the last subscriber. Watch the live dot count in the debug log rise on entering the
-mailbox and fall on leaving it.
+## The problem
 
-![Keyed dots created and destroyed with a list](docs/media/keyed_lifecycle.gif)
+Every live-service game has red dots: "unread mail", "claimable quest", "new shop rotation". Done naively, every screen polls every manager every frame and the lobby buttons are wrong until their pages are opened once. Done well, it's a small piece of infrastructure with hard requirements:
 
-**Seen state and the scheduled reset.** A badge clears when the player looks, and comes
-back by itself when the content behind it changes -- including at a day boundary that no
-event announces.
+- The UI must never compute anything. A badge says *"I am `MailItem|42`"*; **when** it lights is the rule table's decision, **when** it re-evaluates is the event system's.
+- LiveOps adds and changes badges weekly. Rules must be **data, shipped in Lua, replaceable at runtime** — not C# waiting for an app-store release.
+- A lobby button must be correct **before** its page is ever opened; a list row's badge must exist **only while** its page is open.
+- 50 events in one frame must not mean 50 evaluations.
 
-![Seen state and a scheduled daily reset](docs/media/seen_and_reset.gif)
+## The model
 
-## The idea
+**A dot is a type plus ordered keys.** `RedDotType.lua` declares the types; a concrete dot's identity is `"Shop"`, `"MailItem|42"`, `"QuestItem|3|17"`. Two lifecycles follow from it:
 
-Every live-service game grows a red dot system, and it is always the same problems: the
-rules change more often than the client ships, badges have to be right the first time a
-screen opens, lists create and destroy hundreds of them, and naive implementations
-recompute everything every frame.
+- **Global (keyless)** dots are created at boot and always live — the lobby buttons are right from the first frame.
+- **Keyed** dots are created on first `Subscribe` and destroyed when their last subscriber unbinds — they exist only while their page does. No leaks, verified by live counts in the demo log.
 
-A badge is a rule, and a rule is data:
+![Entering the mail screen creates the per-row dots; leaving destroys them — the log shows live dot counts rise and fall](docs/media/keyed_lifecycle.gif)
 
-```lua
--- Assets/Lua/reddot/RedDotRules.lua -- the only file that knows what a badge means
-[RedDotType.Mail] = {
-    events     = MAIL_EVENTS,
-    tracksSeen = true,
-    token      = function() return Game.Mail:InboxToken() end,
-    condition  = function(isUnseen) return isUnseen or Game.Mail:ActionableCount() > 0 end,
-},
+**A rule is a data entry, not code wiring.** Per type: a `condition(keys..., isUnseen?)` predicate over real game state, the `events` that dirty it, optional `tracksSeen` + `token()` for "new content" semantics, optional `resetAt()` for scheduled boundaries (daily shop reset). Shared event-set tables let one added event reach every rule that reads the same data.
 
-[RedDotType.MailItem] = {
-    keys      = { "mailId" },
-    events    = MAIL_EVENTS,
-    condition = function(mailId) return Game.Mail:IsActionable(mailId) end,
-},
+**Events queue; flush computes.** An event never evaluates anything — it marks the type's live dots dirty. One flush per frame evaluates each queued dot at most once and notifies only the subscribers whose value actually changed. Binding computes synchronously, so a component bound mid-frame is correct immediately.
+
+**Seen is a token, not a flag.** `MarkSeen` stores the rule's *current content stamp*. New content moves the stamp, the stored mark no longer matches, the dot relights. A `nil` token means "data not loaded — don't judge yet". Persistence is one versioned JSON blob in PlayerPrefs, written at most once per frame; corrupted or older versions degrade to a clean slate.
+
+![Opening the shop marks it seen; advancing the demo clock one day relights it with no event fired — the token is the date](docs/media/seen_and_reset.gif)
+
+**Dot values are never saved.** Only seen tokens (and the demo clock) persist. Values are derived — recomputed from live game state at boot. In a real game, persistence lives in the managers the rules read, never in the badge layer.
+
+## Hot updates, honestly
+
+`reloadRules(newRules)` swaps the whole rule table: subscriptions are diffed, everything re-evaluates, bindings survive because they reference identities, not rule objects. The demo patch does the two things that matter in production:
+
+1. **Adds a new type** (`LimitedOffer`) with its rule and events — a badge no C# file mentions.
+2. **Rewrites a shipped rule**: the Shop rule gains the offer's event and folds a running offer into its seen-token. Adding a badge is easy in any model; *changing what a shipped badge means* is what hot-updating is for.
+
+And the honest limit is explicit: rules can only read what the C# context exposes (`Game.*` accessors, plus a generic counter as the LiveOps escape hatch). That boundary — only strings, booleans and numbers cross Lua↔C#, no generated glue — is one C# file.
+
+## Safety & tooling
+
+- Every `condition`/`token` call is wrapped in `pcall`: a broken rule logs once and reads `false`. A bad patch can't crash the game.
+- **Boot validation** catches rule-table typos as errors at startup (a token without `tracksSeen`, a rule that can never light, a rule nothing ever refreshes, an unknown event name) — instead of as a badge that silently never works.
+- A **reconcile checker** (editor-only) recomputes everything once per second and logs any mismatch with the cached values — the proof that the event wiring is complete, and the reason the no-polling claim isn't a leap of faith. The 10k-iteration fuzz test asserts `Reconcile() == 0` after every flush and every rules reload.
+- `DumpState()` and live dot counts are wired into the demo's on-screen log.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Lua["Lua (hot-updatable)"]
+        T[RedDotType<br/>type constants]
+        R[RedDotRules<br/>rules as data]
+        M[manager.lua<br/>registry · dirty queue · flush<br/>seen tokens · reset deadlines]
+    end
+    subgraph CS["C# (stable seam)"]
+        B[RedDotBridge<br/>xLua env · loader with patch shadowing]
+        E[EventBus]
+        CTX[RedDotContext<br/>Game.* accessors — the hot-update limit]
+        V[RedDotView + Binder<br/>FairyGUI badge adapter]
+        P[SeenPersistence<br/>one versioned PlayerPrefs blob]
+    end
+    G[Fake game services<br/>mail · quests · shop · clock] --> CTX
+    E -->|signals, no payloads| M
+    T --> R --> M
+    B --- M
+    CTX --> R
+    M -->|onChanged| V
+    M --> P
 ```
 
-- **Identity is a type plus keys.** `"Shop"`, `"MailItem|42"`, `"QuestItem|3|17"`. Global
-  dots exist from boot, so a lobby button is correct before its screen has ever been
-  opened. Keyed dots are created when a row binds and destroyed with the last subscriber,
-  so a list of 500 costs 500 dots while it is open and none afterwards.
-- **No aggregation.** Every dot answers its own question. Nothing is defined as the sum of
-  its children, which is what lets a badge be correct on a tree that does not exist yet.
-- **Queue, then flush.** Events mark dots pending and compute nothing; one drain per frame
-  evaluates each pending dot at most once and notifies only what changed. Subscribing is
-  the deliberate exception — it computes synchronously, so a re-entered screen is right on
-  the frame it opens.
-- **Seen state is a token, not a flag.** Marking seen stores what the player saw, so new
-  content re-arms the badge by itself.
-- **Hot-updatable.** `ReloadRules` swaps the table at runtime, diffs the event
-  subscriptions and creates dots for any new global type. The demo has a button that adds
-  a badge no C# file mentions, live.
+The engine is ~small, deliberate Lua; C# knows nothing about any specific badge. The FairyGUI package (authored in the FairyGUI Editor; source in `FGUIProject/`) contributes one reusable `RedDotBadge` component with a `state` controller — the view layer only selects controller pages.
 
-## Diagnostics that earn their keep
+## Try it
 
-`DumpState()` prints the registry, the seen set and the counters. And the reconcile
-checker recomputes everything once a second and logs `MISMATCH` where the cache and a
-fresh evaluation disagree — **fixing nothing on purpose**, because a mismatch means a
-rule is missing an event, and the cache was right about what it was told.
+Unity 6 (6000.0.x). xLua v2.1.16 and FairyGUI 5.2.0 are vendored (runtime only — see the `VENDORED.md` files).
 
-## The view layer
+1. Clone, open in Unity.
+2. Open `Assets/Scenes/RedDotDemo.unity`, press Play.
+3. Drive it: open Mail / Quests / Shop, add mail, complete and claim quests, start a limited offer after applying the Lua patch, advance the demo clock a day, toggle the reconcile checker — the on-screen log narrates every subscribe, flush and seen-mark.
 
-A badge is a FairyGUI component named `redDot` carrying a controller named `state` with
-the pages `hidden` / `dot` / `count`. The adapter picks the page; the controller's gears
-do the rest, and every missing piece degrades rather than throws.
-`SetRedDotActive(component, false)` is an external kill switch — visible is the rule value
-*and* the screen's say-so — for tutorials and locked tabs, so presentation never leaks
-into the rules. The full authoring contract is in
-[docs/PACKAGE_SPEC.md](docs/PACKAGE_SPEC.md).
+Tests: **95 EditMode + 12 PlayMode**, all driving the real Lua through the real bridge (Test Runner, or headless via `-runTests`; close the Editor first). The fuzz run alone covers thousands of random events, marks, binds, reloads and restarts with full-reconcile and exact-notification invariants.
 
-## Running the demo
+## Battle-tested by hand
 
-Open `Assets/Scenes/RedDotDemo.unity` and press Play. Tabs open sections, buttons poke the
-fake mail / quest / shop services, and the debug panel applies the example Lua patch,
-advances the clock a day to fire a scheduled reset, and toggles the reconcile checker.
+Beyond the suite, the demo was play-tested adversarially, and each finding became a regression test: stale views on screen re-entry (fixed by compute-on-subscribe), a seen-token stuck behind newly arriving content (fixed by marking the open screen on action), two "condition can become true with nothing to make it false" wirings (caught by a written action-pair audit — the class of bug no static check can find), and a patch that lost its link to a shipped badge in a redesign (fixed by letting patches rewrite shipped rules — the better demo, it turned out).
 
-If the authored UI package is ever missing, the demo builds the same screens in code and
-says so in the console. Everything is playable either way.
+## Scope / non-goals
 
-## Running the tests
-
-```
-"C:\Program Files\Unity\Hub\Editor\6000.0.59f2\Editor\Unity.exe" ^
-  -batchmode -nographics -projectPath . ^
-  -runTests -testPlatform EditMode -testResults TestResults\results.xml -logFile -
-```
-
-Swap `EditMode` for `PlayMode` for the scene smoke tests, or use
-**Window → General → Test Runner** in the Editor. Batchmode needs the Editor closed.
-
-## Layout
-
-| Path | What lives there |
-| --- | --- |
-| `Assets/Lua/reddot/` | the engine: types, events, rules, manager, seen store, json |
-| `Assets/Lua/patches/` | the example live-ops patch |
-| `Assets/Scripts/RedDot/` | the bridge, the FairyGUI view and the binding lifetime |
-| `Assets/Scripts/Demo/` | the demo bootstrap, the code-built UI, fake game managers |
-| `Assets/Tests/` | 95 EditMode cases and 12 PlayMode smoke tests |
-| `FGUIProject/` | the FairyGUI Editor source of the UI package |
-| `docs/STATUS.md` | architecture, design decisions, test results, what comes next |
-| `docs/PACKAGE_SPEC.md` | how to author the FairyGUI package the demo binds to |
-
-## Dependencies
-
-Vendored, runtime only, with the parts that were left out recorded next to them:
-
-- [xLua](https://github.com/Tencent/xLua) v2.1.16 — MIT — `Assets/XLua/VENDORED.md`
-- [FairyGUI](https://github.com/fairygui/FairyGUI-unity) 5.2.0 — MIT — `Assets/FairyGUI/VENDORED.md`
-
-Built with Unity 6000.0.59f2.
+Boolean dot values by design (the badge's `count` page is a forward-compatible view convention); fake in-memory game services (they stand in for a game rather than being one); single save slot; no server push — see `docs/STATUS.md` for the full decision log.
 
 ## License
 
