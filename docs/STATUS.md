@@ -340,9 +340,9 @@ scheduled reset with no event raised at all.
 ```
 "C:\Program Files\Unity\Hub\Editor\6000.0.59f2\Editor\Unity.exe" ^
   -batchmode -nographics ^
-  -projectPath C:\SampleProjects\ui-reddot-system ^
+  -projectPath C:\<repo>\ui-reddot-system ^
   -runTests -testPlatform EditMode ^
-  -testResults C:\SampleProjects\ui-reddot-system\TestResults\results.xml ^
+  -testResults C:\<repo>\ui-reddot-system\TestResults\results.xml ^
   -logFile -
 ```
 

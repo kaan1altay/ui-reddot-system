@@ -224,7 +224,7 @@ lit.
 ## Export
 
 1. In the FairyGUI Editor: **File → Publish Settings**
-   - **Path:** `C:\SampleProjects\ui-reddot-system\Assets\FairyGUI-Packages`
+   - **Path:** `C:\<repo>\ui-reddot-system\Assets\FairyGUI-Packages`
    - **Type:** Unity
    - **Binary format:** on (this is what produces `RedDotDemo_fui.bytes`)
 2. **File → Publish** (Ctrl+P).

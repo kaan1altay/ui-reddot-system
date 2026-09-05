@@ -2,7 +2,7 @@
 
 **A production-shaped "red dot" notification system for live-service mobile UIs — Unity, FairyGUI, and Lua (xLua), with the rules hot-updatable at runtime.**
 
-A clean-room portfolio sample by [Kaan Altay](https://github.com/kaan1altay). I work professionally on the client of a live-service mobile ARPG; this repo is a from-scratch implementation of the badge-notification architecture I'd ship today — written entirely for this repository.
+A clean-room portfolio sample by [Kaan Altay](https://github.com/kaan1altay). Red dots are standard infrastructure in live-service mobile games; this is a from-scratch implementation of that architecture, written entirely for this repository.
 
 ![Applying a Lua patch at runtime: a badge type that did not exist a second ago lights up the Shop button — zero C# changes](docs/media/hot_update_patch.gif)
 
